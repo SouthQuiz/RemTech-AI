@@ -30,7 +30,28 @@ remtechnika-ai/
 └── frontend/                # React (Vite): логин, чат, drag-and-drop, скачивание
 ```
 
-## Запуск (разработка)
+## Запуск через Docker Compose (целевой стек, EPIC-01)
+
+Поднимает `postgres` (pgvector), `redis`, `api` (FastAPI) и `caddy` (HTTPS в ЛВС):
+
+```bash
+# 1. Заполни секреты
+cp backend/.env.example backend/.env   # впиши ANTHROPIC_API_KEY, JWT_SECRET и т.д.
+
+# 2. Собери фронтенд (Caddy раздаёт frontend/dist)
+cd frontend && npm install && npm run build && cd ..
+
+# 3. Подними стек
+docker compose up -d --build
+
+# Проверка:
+curl http://localhost/api/health      # {"status":"ok"}
+```
+
+`postgres` инициализируется с расширением `pgvector` (см. `deploy/postgres/init`).
+Миграции схемы (Alembic) применяются на слое БД (EPIC-01, TASK-0103/0104).
+
+## Запуск (локальная разработка без Docker)
 
 ### 1. Бэкенд
 ```powershell

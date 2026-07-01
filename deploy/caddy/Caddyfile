@@ -1,0 +1,22 @@
+# Caddy — обратный прокси + HTTPS в ЛВС.
+# {$SITE_ADDRESS} задаётся в окружении (например, remtech.local или IP).
+# По умолчанию слушаем :80 (для локальной разработки/проверки).
+
+{$SITE_ADDRESS::80} {
+	# API и WebSocket → сервис api
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /ws {
+		reverse_proxy api:8000
+	}
+
+	# Остальное — статика собранного фронтенда (SPA)
+	handle {
+		root * /srv/frontend
+		try_files {path} /index.html
+		file_server
+	}
+
+	encode gzip
+}
