@@ -5,6 +5,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-remtech}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-remtech}
       POSTGRES_DB: ${POSTGRES_DB:-remtech}
+    ports:
+      # Проброс на хост для локальной разработки/тестов (в проде можно убрать).
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -18,6 +21,8 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
