@@ -1,9 +1,8 @@
-"""Генерация отчётов админ-панели в Excel и Word (с оформлением)."""
+"""Генерация отчётов админ-панели в Excel и Word (с оформлением).
+Функции data-driven: принимают готовые данные (собранные вызывающей стороной)."""
 import datetime as dt
 import io
 import re
-
-import db
 
 # Фирменная гамма РемТехники: жёлтый / чёрный / белый
 YELLOW = "FFCB05"   # титульная плашка
@@ -34,22 +33,13 @@ def _msg_text(content) -> str:
     return ""
 
 
-def _gather() -> dict:
-    return {
-        "totals": db.admin_overview(),
-        "users": db.admin_user_stats(),
-        "per_day": db.messages_per_day(14),
-        "activity": db.activity_log_list(limit=300),
-    }
-
-
 # ── Excel ─────────────────────────────────────────────────────────────────────
 
-def build_xlsx() -> bytes:
+def build_xlsx(data: dict) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-    d = _gather()
+    d = data
     wb = Workbook()
 
     thin = Side(style="thin", color="D9D9D9")
@@ -161,14 +151,14 @@ def build_xlsx() -> bytes:
 
 # ── Word ──────────────────────────────────────────────────────────────────────
 
-def build_docx() -> bytes:
+def build_docx(data: dict) -> bytes:
     from docx import Document
     from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
 
-    d = _gather()
+    d = data
     navy = RGBColor(0x1A, 0x1A, 0x1A)
     doc = Document()
 
@@ -271,17 +261,14 @@ def build_docx() -> bytes:
 
 # ── Word: переписка одного сотрудника ─────────────────────────────────────────
 
-def build_user_docx(user_id: int) -> bytes:
+def build_user_docx(user: dict, convs: list) -> bytes:
+    """user: {full_name, username, role}; convs: [{title, updated_at, count,
+    items: [{role, content}]}]."""
     from docx import Document
     from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
-
-    user = db.get_user(user_id)
-    if not user:
-        raise ValueError("Сотрудник не найден")
-    convs = db.admin_conversations(user_id)
 
     navy = RGBColor(0x1A, 0x1A, 0x1A)   # заголовки (чёрный)
     blue = RGBColor(0x1A, 0x1A, 0x1A)   # метка «Сотрудник» (чёрный)
@@ -332,12 +319,11 @@ def build_user_docx(user_id: int) -> bytes:
         cr.font.size = Pt(14)
         cr.font.color.rgb = navy
         sub = doc.add_paragraph()
-        sr = sub.add_run(f"{conv['messages']} сообщений · обновлён {_fmt_dt(conv['updated_at'])}")
+        sr = sub.add_run(f"{conv['count']} сообщений · обновлён {_fmt_dt(conv['updated_at'])}")
         sr.font.size = Pt(9)
         sr.font.color.rgb = grey
 
-        messages = db.load_history(conv["id"], limit=1000)
-        for m in messages:
+        for m in conv["items"]:
             text = _msg_text(m["content"]).strip()
             if not text:
                 continue

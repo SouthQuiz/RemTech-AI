@@ -97,3 +97,25 @@ async def test_admin_rbac_and_management(client):
                            params={"active": "false"}, headers=_auth(admin))
     assert da.status_code == 200
     assert (await client.post("/api/login", json={"username": "worker", "password": "5678"})).status_code == 401
+
+
+async def test_admin_exports(client):
+    admin = await _register_admin(client)
+    await client.post("/api/admin/users",
+                      json={"username": "anna", "password": "1234", "full_name": "Анна", "role": "user"},
+                      headers=_auth(admin))
+    users = (await client.get("/api/admin/users", headers=_auth(admin))).json()
+    aid = next(u["id"] for u in users if u["username"] == "anna")
+
+    xlsx = await client.get("/api/admin/export/xlsx", headers=_auth(admin))
+    assert xlsx.status_code == 200 and len(xlsx.content) > 2000
+
+    docx = await client.get("/api/admin/export/docx", headers=_auth(admin))
+    assert docx.status_code == 200 and len(docx.content) > 2000
+
+    user_docx = await client.get(f"/api/admin/users/{aid}/export/docx", headers=_auth(admin))
+    assert user_docx.status_code == 200 and len(user_docx.content) > 2000
+
+    # сотруднику экспорт запрещён
+    anna = (await client.post("/api/login", json={"username": "anna", "password": "1234"})).json()["token"]
+    assert (await client.get("/api/admin/export/xlsx", headers=_auth(anna))).status_code == 403

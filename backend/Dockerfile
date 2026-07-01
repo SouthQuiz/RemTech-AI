@@ -17,4 +17,5 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY . .
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Применяем миграции, затем запускаем новый async-app (PostgreSQL).
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

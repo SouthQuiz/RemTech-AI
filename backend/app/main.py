@@ -2,7 +2,12 @@
 
 REST: авторизация, чаты, файлы, админка. WebSocket-чат и экспорт — Стадия 3b.
 """
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+import json
+
+from fastapi import (
+    Depends, FastAPI, File, Form, HTTPException, UploadFile,
+    WebSocket, WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,8 +18,13 @@ from app import auth
 from app import repositories as repo
 from app import storage
 from app.config import get_settings
-from app.database import get_db, init_extensions
-from services.extract import detect_kind
+from app.database import SessionLocal, get_db, init_extensions
+from app.orchestrator import orchestrator
+from services import reports
+from services.extract import detect_kind, extract_text
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 settings = get_settings()
 app = FastAPI(title="Remtechnika AI")
@@ -271,3 +281,104 @@ async def api_admin_activity(limit: int = 200, user_id: int | None = None,
                              admin: dict = Depends(admin_user),
                              db: AsyncSession = Depends(get_db)):
     return await repo.activity_log_list(db, limit=limit, user_id=user_id)
+
+
+# ── Экспорт отчётов ──────────────────────────────────────────────────────────
+
+async def _report_data(db) -> dict:
+    return {"totals": await repo.admin_overview(db),
+            "users": await repo.admin_user_stats(db),
+            "per_day": await repo.messages_per_day(db, 14),
+            "activity": await repo.activity_log_list(db, limit=300)}
+
+
+@app.get("/api/admin/export/xlsx")
+async def api_admin_export_xlsx(admin: dict = Depends(admin_user),
+                                db: AsyncSession = Depends(get_db)):
+    data = reports.build_xlsx(await _report_data(db))
+    return Response(content=data, media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": 'attachment; filename="report.xlsx"'})
+
+
+@app.get("/api/admin/export/docx")
+async def api_admin_export_docx(admin: dict = Depends(admin_user),
+                                db: AsyncSession = Depends(get_db)):
+    data = reports.build_docx(await _report_data(db))
+    return Response(content=data, media_type=_DOCX_MIME,
+                    headers={"Content-Disposition": 'attachment; filename="report.docx"'})
+
+
+@app.get("/api/admin/users/{uid}/export/docx")
+async def api_admin_export_user_docx(uid: int, admin: dict = Depends(admin_user),
+                                     db: AsyncSession = Depends(get_db)):
+    user = await repo.get_user(db, uid)
+    if not user:
+        raise HTTPException(404, "Сотрудник не найден")
+    convs_meta = await repo.admin_conversations(db, uid)
+    convs = []
+    for c in convs_meta:
+        items = await repo.load_history(db, c["id"], limit=1000)
+        convs.append({"title": c["title"], "updated_at": c["updated_at"],
+                      "count": c["messages"], "items": items})
+    user_dict = {"full_name": user.full_name, "username": user.username, "role": user.role}
+    data = reports.build_user_docx(user_dict, convs)
+    return Response(content=data, media_type=_DOCX_MIME,
+                    headers={"Content-Disposition": 'attachment; filename="user_chats.docx"'})
+
+
+# ── WebSocket-чат ────────────────────────────────────────────────────────────
+
+@app.websocket("/ws")
+async def ws_chat(ws: WebSocket):
+    token = ws.query_params.get("token", "")
+    user = auth.verify(token)
+    if not user:
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    uid = user["user_id"]
+
+    async def emit(event: dict):
+        await ws.send_text(json.dumps(event, ensure_ascii=False))
+
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            text = msg.get("text", "")
+            conversation_id = msg.get("conversation_id")
+            file_ids = msg.get("file_ids", [])
+
+            async with SessionLocal() as s:
+                if not conversation_id:
+                    conv = await repo.create_conversation(s, uid, (text or "Новый чат")[:60])
+                    await s.commit()
+                    conversation_id = conv.id
+                    await emit({"type": "conversation", "id": conversation_id, "title": conv.title})
+                else:
+                    conv = await repo.get_conversation(s, conversation_id)
+                    if not conv or conv.user_id != uid:
+                        await emit({"type": "error", "text": "Чат не найден или недоступен"})
+                        continue
+
+                # вложения — только свои файлы (защита от IDOR)
+                attachments = []
+                for fid in file_ids:
+                    rec = await repo.get_file_record(s, fid)
+                    if not rec or rec.user_id != uid:
+                        continue
+                    res = storage.read_record_bytes(rec)
+                    if not res:
+                        continue
+                    data, name = res
+                    kind = detect_kind(name)
+                    txt = "" if kind == "image" else extract_text(data, name)
+                    attachments.append({"kind": kind, "name": name, "data": data, "text": txt})
+
+            await orchestrator.process(conversation_id, uid, text, attachments, emit)
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        try:
+            await emit({"type": "error", "text": f"Сбой: {e}"})
+        except Exception:
+            pass
