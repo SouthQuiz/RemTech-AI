@@ -84,6 +84,11 @@ function Login({ onLogin, theme, onToggleTheme }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [regOpen, setRegOpen] = useState(false);
+
+  useEffect(() => {
+    api.authStatus().then((s) => setRegOpen(!!s.registration_open)).catch(() => {});
+  }, []);
 
   const isReg = mode === "register";
 
@@ -182,12 +187,14 @@ function Login({ onLogin, theme, onToggleTheme }) {
           {!busy && <i className="ti ti-arrow-right" />}
         </button>
 
-        <div className="login-switch">
-          {isReg ? "Уже есть аккаунт?" : "Нет аккаунта?"}
-          <button type="button" onClick={switchMode}>
-            {isReg ? "Войти" : "Зарегистрироваться"}
-          </button>
-        </div>
+        {regOpen && (
+          <div className="login-switch">
+            {isReg ? "Уже есть аккаунт?" : "Первый запуск — создайте администратора."}
+            <button type="button" onClick={switchMode}>
+              {isReg ? "Войти" : "Регистрация"}
+            </button>
+          </div>
+        )}
       </form>
     </div>
   );

@@ -68,16 +68,35 @@ class NewConversationReq(BaseModel):
     title: str | None = None
 
 
+class AdminCreateUserReq(BaseModel):
+    username: str
+    password: str
+    full_name: str | None = ""
+    role: str = "user"
+
+
+class PasswordReq(BaseModel):
+    password: str
+
+
 # ── REST ──────────────────────────────────────────────────────────────────────
+
+@app.get("/api/auth/status")
+def api_auth_status():
+    # Открытая регистрация доступна только для первого (админского) аккаунта.
+    return {"registration_open": auth.registration_open()}
+
 
 @app.post("/api/register")
 def api_register(req: RegisterReq):
+    if not auth.registration_open():
+        raise HTTPException(403, "Регистрация закрыта. Аккаунт заводит администратор.")
     token, err = auth.register(req.username, req.password, req.full_name or "")
     if err:
         raise HTTPException(400, err)
     u = db.get_user_by_username(req.username.strip())
     if u:
-        db.log_activity(u["id"], "register", "Регистрация аккаунта")
+        db.log_activity(u["id"], "register", "Регистрация администратора")
     return {"token": token}
 
 
@@ -137,6 +156,26 @@ def api_admin_conversation_messages(cid: int, admin: dict = Depends(admin_user))
 def api_admin_activity(limit: int = 200, user_id: int | None = None,
                        admin: dict = Depends(admin_user)):
     return db.activity_log_list(limit=limit, user_id=user_id)
+
+
+@app.post("/api/admin/users")
+def api_admin_create_user(req: AdminCreateUserReq, admin: dict = Depends(admin_user)):
+    user, err = auth.admin_create_user(req.username, req.password, req.full_name or "", req.role)
+    if err:
+        raise HTTPException(400, err)
+    db.log_activity(admin["user_id"], "create_user", f"Создан аккаунт {req.username}")
+    return {"id": user["id"], "username": user["username"], "role": user["role"]}
+
+
+@app.post("/api/admin/users/{uid}/password")
+def api_admin_reset_password(uid: int, req: PasswordReq, admin: dict = Depends(admin_user)):
+    if not db.get_user(uid):
+        raise HTTPException(404, "Сотрудник не найден")
+    if len(req.password) < 4:
+        raise HTTPException(400, "Пароль слишком короткий (минимум 4 символа)")
+    db.update_password(uid, auth.hash_password(req.password))
+    db.log_activity(admin["user_id"], "reset_password", f"Сброшен пароль (id {uid})")
+    return {"ok": True}
 
 
 @app.post("/api/admin/users/{uid}/active")
@@ -225,6 +264,12 @@ def api_download(file_id: int, token: str = ""):
     u = auth.verify(token) if token else None
     if not u:
         raise HTTPException(401, "Не авторизован")
+    rec = db.get_file_record(file_id)
+    if not rec:
+        raise HTTPException(404, "Файл не найден")
+    # Проверка владения: свой файл или администратор (защита от IDOR).
+    if rec["user_id"] != u["user_id"] and u.get("role") != "admin":
+        raise HTTPException(403, "Нет доступа к файлу")
     res = storage.read_bytes(file_id)
     if not res:
         raise HTTPException(404, "Файл не найден")
@@ -259,10 +304,19 @@ async def ws_chat(ws: WebSocket):
                 conv = db.create_conversation(user["user_id"], (text or "Новый чат")[:60])
                 conversation_id = conv["id"]
                 await emit({"type": "conversation", "id": conversation_id, "title": conv["title"]})
+            else:
+                # Проверка владения чатом (защита от IDOR)
+                conv = db.get_conversation(conversation_id)
+                if not conv or conv["user_id"] != user["user_id"]:
+                    await emit({"type": "error", "text": "Чат не найден или недоступен"})
+                    continue
 
-            # Резолвим вложения: читаем байты, извлекаем текст
+            # Резолвим вложения: только свои файлы (защита от IDOR)
             attachments = []
             for fid in file_ids:
+                rec = db.get_file_record(fid)
+                if not rec or rec["user_id"] != user["user_id"]:
+                    continue
                 res = storage.read_bytes(fid)
                 if not res:
                     continue

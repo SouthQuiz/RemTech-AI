@@ -29,11 +29,18 @@ async function req(path, opts = {}) {
 }
 
 export const api = {
+  authStatus: () => req("/auth/status"),
   login: (username, password) =>
     req("/login", { method: "POST", json: { username, password } }),
   register: (username, password, full_name) =>
     req("/register", { method: "POST", json: { username, password, full_name } }),
   me: () => req("/me"),
+  adminCreateUser: (username, password, full_name, role) =>
+    req("/admin/users", { method: "POST", json: { username, password, full_name, role } }),
+  adminResetPassword: (uid, password) =>
+    req(`/admin/users/${uid}/password`, { method: "POST", json: { password } }),
+  adminSetActive: (uid, active) =>
+    req(`/admin/users/${uid}/active?active=${active}`, { method: "POST" }),
   conversations: () => req("/conversations"),
   newConversation: (title) => req("/conversations", { method: "POST", json: { title } }),
   deleteConversation: (id) => req(`/conversations/${id}`, { method: "DELETE" }),

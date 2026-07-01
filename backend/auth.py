@@ -74,6 +74,29 @@ def register(username: str, password: str, full_name: str = "") -> tuple[str | N
     return make_token(user), None
 
 
+def admin_create_user(username: str, password: str, full_name: str = "",
+                      role: str = "user") -> tuple[dict | None, str | None]:
+    """Создание аккаунта администратором (регистрация по приглашению)."""
+    username = (username or "").strip()
+    full_name = (full_name or "").strip()
+    if len(username) < 3:
+        return None, "Логин слишком короткий (минимум 3 символа)"
+    if len(password) < 4:
+        return None, "Пароль слишком короткий (минимум 4 символа)"
+    if role not in ("admin", "user"):
+        role = "user"
+    if db.get_user_by_username(username):
+        return None, "Такой логин уже занят"
+    user = db.create_user(username, hash_password(password), role, full_name)
+    return user, None
+
+
+def registration_open() -> bool:
+    """Открытая регистрация доступна только для создания первого (админского)
+    аккаунта. Дальше аккаунты заводит администратор."""
+    return db.count_registered_users() == 0
+
+
 def login(username: str, password: str) -> tuple[str | None, str | None]:
     user = db.get_user_by_username((username or "").strip())
     if not user or not user.get("password_hash"):

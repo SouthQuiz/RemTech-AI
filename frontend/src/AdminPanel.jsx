@@ -45,7 +45,8 @@ export default function AdminPanel() {
     }
   }
 
-  useEffect(() => { api.adminOverview().then(setData).catch(() => {}); }, []);
+  const load = () => api.adminOverview().then(setData).catch(() => {});
+  useEffect(() => { load(); }, []);
   useEffect(() => {
     if (tab === "logs") api.adminActivity().then(setActivity).catch(() => {});
   }, [tab]);
@@ -95,7 +96,7 @@ export default function AdminPanel() {
         )}
 
         {tab === "users" && !viewUser && (
-          <UsersTable users={data?.users || []} onOpen={openUser} />
+          <UsersManage users={data?.users || []} onOpen={openUser} onChanged={load} />
         )}
 
         {tab === "users" && viewUser && !viewConv && (
@@ -159,15 +160,80 @@ function Stats({ data, t }) {
   );
 }
 
-function UsersTable({ users, onOpen, compact }) {
+function UsersManage({ users, onOpen, onChanged }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ username: "", full_name: "", password: "", role: "user" });
+  const [busy, setBusy] = useState(false);
+
+  async function create(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.adminCreateUser(form.username, form.password, form.full_name, form.role);
+      toast.success("Сотрудник добавлен");
+      setForm({ username: "", full_name: "", password: "", role: "user" });
+      setAdding(false);
+      onChanged();
+    } catch (err) { toast.error(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleActive(u) {
+    try {
+      await api.adminSetActive(u.id, !u.active);
+      toast.success(u.active ? "Аккаунт отключён" : "Аккаунт включён");
+      onChanged();
+    } catch (err) { toast.error(err.message); }
+  }
+
+  async function resetPass(u) {
+    const p = window.prompt(`Новый пароль для «${u.full_name || u.username}»:`);
+    if (!p) return;
+    try {
+      await api.adminResetPassword(u.id, p);
+      toast.success("Пароль сброшен");
+    } catch (err) { toast.error(err.message); }
+  }
+
+  return (
+    <div>
+      <div className="users-toolbar">
+        <button className="add-user-btn" onClick={() => setAdding((a) => !a)}>
+          <i className="ti ti-user-plus" />Добавить сотрудника
+        </button>
+      </div>
+      {adding && (
+        <form className="add-user-form" onSubmit={create}>
+          <input placeholder="Имя и фамилия" value={form.full_name}
+                 onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+          <input placeholder="Логин" value={form.username}
+                 onChange={(e) => setForm({ ...form, username: e.target.value })} />
+          <input placeholder="Пароль" value={form.password}
+                 onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+            <option value="user">Сотрудник</option>
+            <option value="admin">Администратор</option>
+          </select>
+          <button disabled={busy || !form.username || !form.password}>
+            {busy ? "…" : "Создать"}
+          </button>
+        </form>
+      )}
+      <UsersTable users={users} onOpen={onOpen} onToggleActive={toggleActive} onResetPassword={resetPass} />
+    </div>
+  );
+}
+
+function UsersTable({ users, onOpen, compact, onToggleActive, onResetPassword }) {
   if (!users.length) return <div className="admin-empty">Нет сотрудников</div>;
+  const manage = onToggleActive || onResetPassword;
   return (
     <div className="table-wrap">
     <table className="admin-table">
       <thead>
         <tr>
           <th>Сотрудник</th><th>Роль</th><th>Чатов</th><th>Сообщений</th><th>Был активен</th>
-          {onOpen && <th></th>}
+          {(onOpen || manage) && <th></th>}
         </tr>
       </thead>
       <tbody>
@@ -182,17 +248,34 @@ function UsersTable({ users, onOpen, compact }) {
                 </div>
               </div>
             </td>
-            <td>{u.role === "admin"
-              ? <span className="badge badge-admin">Админ</span>
-              : <span className="badge">Сотрудник</span>}</td>
+            <td>
+              {u.role === "admin"
+                ? <span className="badge badge-admin">Админ</span>
+                : <span className="badge">Сотрудник</span>}
+              {!u.active && <span className="badge badge-off">Отключён</span>}
+            </td>
             <td>{u.conversations}</td>
             <td>{u.messages}</td>
             <td className="cell-sub">{fmt(u.last_active)}</td>
-            {onOpen && (
-              <td>
-                <button className="link-btn" onClick={() => onOpen(u.id)}>
-                  Чаты <i className="ti ti-chevron-right" />
-                </button>
+            {(onOpen || manage) && (
+              <td className="row-actions">
+                {onResetPassword && (
+                  <button className="icon-act" title="Сбросить пароль"
+                          aria-label="Сбросить пароль" onClick={() => onResetPassword(u)}>
+                    <i className="ti ti-key" />
+                  </button>
+                )}
+                {onToggleActive && (
+                  <button className="icon-act" title={u.active ? "Отключить" : "Включить"}
+                          aria-label="Переключить активность" onClick={() => onToggleActive(u)}>
+                    <i className={u.active ? "ti ti-user-off" : "ti ti-user-check"} />
+                  </button>
+                )}
+                {onOpen && (
+                  <button className="link-btn" onClick={() => onOpen(u.id)}>
+                    Чаты <i className="ti ti-chevron-right" />
+                  </button>
+                )}
               </td>
             )}
           </tr>
