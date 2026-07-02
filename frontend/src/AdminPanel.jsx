@@ -71,6 +71,7 @@ export default function AdminPanel() {
       <div className="admin-tabs">
         {[["stats", "ti-chart-bar", "Статистика"],
           ["users", "ti-users", "Сотрудники"],
+          ["kb", "ti-database", "База знаний"],
           ["logs", "ti-history", "Журнал"]].map(([id, icon, label]) => (
           <button
             key={id}
@@ -107,8 +108,101 @@ export default function AdminPanel() {
           <ConvView view={viewConv} onBack={() => setViewConv(null)} />
         )}
 
+        {tab === "kb" && <KnowledgeBase />}
+
         {tab === "logs" && <Logs rows={activity} />}
       </div>
+    </div>
+  );
+}
+
+const ROLE_LABEL = { "": "Все сотрудники", user: "Сотрудники", admin: "Только админ" };
+
+function KnowledgeBase() {
+  const [docs, setDocs] = useState([]);
+  const [role, setRole] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function load() {
+    api.adminKbList().then(setDocs).catch((e) => toast.error(e.message));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function upload(files) {
+    for (const f of Array.from(files)) {
+      setBusy(true);
+      try {
+        const r = await api.adminKbUpload(f, role);
+        toast.success(`«${f.name}» — ${r.chunks} фрагментов`);
+      } catch (e) {
+        toast.error(e.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    load();
+  }
+
+  async function remove(d) {
+    if (!window.confirm(`Удалить «${d.file_name}» из базы знаний?`)) return;
+    try {
+      await api.adminKbDelete(d.id);
+      setDocs((x) => x.filter((y) => y.id !== d.id));
+      toast.success("Документ удалён");
+    } catch (e) { toast.error(e.message); }
+  }
+
+  return (
+    <div>
+      <div className="kb-upload">
+        <div className="kb-upload-row">
+          <label className="kb-role">
+            Доступ:
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="">Все сотрудники</option>
+              <option value="user">Сотрудники</option>
+              <option value="admin">Только админ</option>
+            </select>
+          </label>
+          <label className={"kb-add-btn" + (busy ? " busy" : "")}>
+            <i className={busy ? "ti ti-loader-2" : "ti ti-upload"} />
+            {busy ? "Загружаю…" : "Загрузить документы"}
+            <input type="file" multiple hidden disabled={busy}
+                   onChange={(e) => upload(e.target.files)} />
+          </label>
+        </div>
+        <div className="kb-hint">
+          PDF, DOCX, XLSX, PPTX, TXT — текст извлекается, векторизуется (bge-m3) и
+          добавляется в базу знаний. Агент ищет по ней при ответах.
+        </div>
+      </div>
+
+      {docs.length === 0 ? (
+        <div className="admin-empty">База знаний пуста — загрузите документы.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr><th>Документ</th><th>Доступ</th><th>Фрагментов</th><th>Загружен</th><th></th></tr>
+            </thead>
+            <tbody>
+              {docs.map((d) => (
+                <tr key={d.id}>
+                  <td><div className="cell-user"><i className="ti ti-file-text" style={{ fontSize: 18 }} /> {d.file_name}</div></td>
+                  <td>{ROLE_LABEL[d.owner_role || ""] || d.owner_role}</td>
+                  <td>{d.chunks}</td>
+                  <td className="cell-sub">{fmt(d.created_at)}</td>
+                  <td className="row-actions">
+                    <button className="icon-act" title="Удалить" onClick={() => remove(d)}>
+                      <i className="ti ti-trash" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

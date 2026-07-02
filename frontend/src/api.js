@@ -53,6 +53,20 @@ export const api = {
   exportDocx: () => downloadAuthed("/admin/export/docx", "Отчёт_Ремтехника.docx"),
   exportUserDocx: (uid, name) =>
     downloadAuthed(`/admin/users/${uid}/export/docx`, `Переписка_${name}.docx`),
+  adminKbList: () => req("/admin/kb"),
+  adminKbDelete: (id) => req(`/admin/kb/${id}`, { method: "DELETE" }),
+  adminKbUpload: async (file, ownerRole) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (ownerRole) fd.append("owner_role", ownerRole);
+    const res = await fetch("/api/admin/kb/upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: fd,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Ошибка загрузки");
+    return res.json();
+  },
   upload: async (file, conversationId) => {
     const fd = new FormData();
     fd.append("file", file);
