@@ -30,6 +30,29 @@ remtechnika-ai/
 └── frontend/                # React (Vite): логин, чат, drag-and-drop, скачивание
 ```
 
+## База знаний (RAG) — эмбеддинги bge-m3 через Ollama
+
+Для векторизации документов нужен локальный эмбеддер **bge-m3** (бесплатно, данные
+не покидают контур — 152-ФЗ):
+
+```bash
+# 1. Установить Ollama (ollama.com) и запустить сервер
+ollama serve
+
+# 2. Скачать модель эмбеддингов (~1.2 ГБ)
+ollama pull bge-m3
+```
+
+В `.env` (по умолчанию уже так):
+```
+EMBED_BACKEND=ollama
+OLLAMA_URL=http://localhost:11434
+EMBED_MODEL=bge-m3
+```
+Для тестов/без GPU: `EMBED_BACKEND=fake` (детерминированный эмбеддер).
+Загрузка документов — `POST /api/admin/kb/upload` (только admin); поиск —
+инструмент `search_knowledge_base` в агенте (фильтр по ролям).
+
 ## Запуск через Docker Compose (целевой стек, EPIC-01)
 
 Поднимает `postgres` (pgvector), `redis`, `api` (FastAPI) и `caddy` (HTTPS в ЛВС):
