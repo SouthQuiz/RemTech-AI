@@ -160,3 +160,43 @@ async def test_models_and_agents_crud(client):
     assert (await client.get("/api/admin/models", headers=_auth(worker))).status_code == 403
     assert (await client.post("/api/admin/agents", headers=_auth(worker),
                               json={"name": "x"})).status_code == 403
+
+
+async def test_conversation_messages_idor(client):
+    admin = await _register_admin(client)
+    await client.post("/api/admin/users", headers=_auth(admin),
+                      json={"username": "anna", "password": "1234", "role": "user"})
+    await client.post("/api/admin/users", headers=_auth(admin),
+                      json={"username": "igor", "password": "1234", "role": "user"})
+    anna = (await client.post("/api/login", json={"username": "anna", "password": "1234"})).json()["token"]
+    igor = (await client.post("/api/login", json={"username": "igor", "password": "1234"})).json()["token"]
+
+    conv = (await client.post("/api/conversations", json={"title": "Анна"}, headers=_auth(anna))).json()
+    cid = conv["id"]
+    # владелец читает свои сообщения
+    assert (await client.get(f"/api/conversations/{cid}/messages", headers=_auth(anna))).status_code == 200
+    # чужой пользователь — 404 (IDOR)
+    assert (await client.get(f"/api/conversations/{cid}/messages", headers=_auth(igor))).status_code == 404
+
+
+async def test_admin_conversation_views(client):
+    admin = await _register_admin(client)
+    await client.post("/api/admin/users", headers=_auth(admin),
+                      json={"username": "anna", "password": "1234", "full_name": "Анна", "role": "user"})
+    anna = (await client.post("/api/login", json={"username": "anna", "password": "1234"})).json()["token"]
+    cid = (await client.post("/api/conversations", json={"title": "КП"}, headers=_auth(anna))).json()["id"]
+
+    users = (await client.get("/api/admin/users", headers=_auth(admin))).json()
+    aid = next(u["id"] for u in users if u["username"] == "anna")
+
+    # админ видит чаты сотрудника
+    uc = await client.get(f"/api/admin/users/{aid}/conversations", headers=_auth(admin))
+    assert uc.status_code == 200
+    assert uc.json()["user"]["username"] == "anna"
+    assert any(c["id"] == cid for c in uc.json()["conversations"])
+
+    # админ читает любой чат
+    cm = await client.get(f"/api/admin/conversations/{cid}/messages", headers=_auth(admin))
+    assert cm.status_code == 200
+    # сотруднику admin-эндпоинты закрыты
+    assert (await client.get(f"/api/admin/conversations/{cid}/messages", headers=_auth(anna))).status_code == 403

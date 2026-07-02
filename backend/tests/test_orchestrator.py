@@ -1,4 +1,9 @@
-"""Cutover Стадия 3b — тесты чистых функций оркестратора (без вызова модели)."""
+"""Cutover Стадия 3b — тесты оркестратора: чистые функции + сквозной process()."""
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app import orchestrator as orch
+from app import repositories as repo
+from app.config import get_settings
 from app.orchestrator import _safe_content, _sanitize_history
 
 
@@ -41,3 +46,54 @@ def test_sanitize_drops_leading_non_user():
     ]
     clean = _sanitize_history(history)
     assert clean[0]["role"] == "user"
+
+
+# ── Сквозной прогон агент-лупа со стаб-моделью ────────────────────────────────
+
+class _Block:
+    def __init__(self, text):
+        self.type = "text"
+        self.text = text
+
+
+class _Final:
+    stop_reason = "end_turn"
+
+    def __init__(self, text):
+        self.content = [_Block(text)]
+
+
+class _StubGateway:
+    async def run(self, alias, system, tools, messages, on_delta):
+        await on_delta("гото")
+        await on_delta("во")
+        return _Final("готово")
+
+
+async def test_process_persists_dialog(session, monkeypatch):
+    """process() стримит ответ и сохраняет диалог (user + assistant) в БД."""
+    user = await repo.create_user(session, "u", "h$1")
+    conv = await repo.create_conversation(session, user.id, "Новый чат")
+    await session.commit()
+
+    # оркестратор пишет через свой SessionLocal — направим на ту же тестовую БД
+    base = get_settings().database_url
+    test_url = base.rsplit("/", 1)[0] + "/remtech_test"
+    engine = create_async_engine(test_url)
+    monkeypatch.setattr(orch, "SessionLocal", async_sessionmaker(engine, expire_on_commit=False))
+    monkeypatch.setattr(orch, "gateway", _StubGateway())
+
+    events = []
+    async def emit(e):
+        events.append(e)
+
+    await orch.Orchestrator().process(conv.id, user.id, "привет", [], emit)
+
+    done = [e for e in events if e["type"] == "done"]
+    assert done and done[0]["text"] == "готово"
+    assert "".join(e["text"] for e in events if e["type"] == "delta") == "готово"
+
+    hist = await repo.load_history(session, conv.id)
+    assert [m["role"] for m in hist] == ["user", "assistant"]
+    assert hist[1]["content"] == "готово"
+    await engine.dispose()
