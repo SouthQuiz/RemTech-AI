@@ -40,9 +40,13 @@ class Settings(BaseSettings):
     # ── медиа ──────────────────────────────────────────────────────────────────
     replicate_api_token: str = ""
 
-    # ── RAG / TEI ──────────────────────────────────────────────────────────────
-    tei_url: str = ""                # эмбеддинги/реранкер (bge-m3) на GPU
+    # ── RAG / эмбеддинги ───────────────────────────────────────────────────────
+    tei_url: str = ""                # реранкер (bge-reranker) на GPU — стадия 3b
+    embed_backend: str = "ollama"    # ollama | fake (fake — для тестов/без GPU)
+    ollama_url: str = "http://localhost:11434"
+    embed_model: str = "bge-m3"
     embed_dim: int = 1024
+    kb_top_k: int = 5
 
     # ── файлы / документы ──────────────────────────────────────────────────────
     files_dir: str = "data/files"

@@ -12,6 +12,8 @@ from app.models import (
     Agent,
     ChatHistory,
     Conversation,
+    KBChunk,
+    KBDocument,
     ModelConfig,
     UploadedFile,
     User,
@@ -271,6 +273,55 @@ async def list_agents(s) -> list[Agent]:
 
 async def delete_agent(s, agent_id: int) -> None:
     await s.execute(delete(Agent).where(Agent.id == agent_id))
+
+
+# ── База знаний (RAG) ──────────────────────────────────────────────────────────
+
+async def create_kb_document(s, file_name: str, source: str = "",
+                             owner_role: str | None = None) -> KBDocument:
+    doc = KBDocument(file_name=file_name, source=source or None, owner_role=owner_role)
+    s.add(doc)
+    await s.flush()
+    return doc
+
+
+async def add_chunks(s, document_id: int, chunks: list[tuple[str, list[float], dict | None]]) -> int:
+    """chunks: [(chunk_text, embedding, meta)]. Возвращает число добавленных."""
+    for text, emb, meta in chunks:
+        s.add(KBChunk(document_id=document_id, chunk_text=text, embedding=emb, meta=meta))
+    await s.flush()
+    return len(chunks)
+
+
+async def list_kb_documents(s) -> list[dict]:
+    cnt = (select(func.count()).where(KBChunk.document_id == KBDocument.id).scalar_subquery())
+    rows = (await s.execute(
+        select(KBDocument, cnt.label("chunks")).order_by(KBDocument.id.desc()))).all()
+    return [{"id": d.id, "file_name": d.file_name, "source": d.source,
+             "owner_role": d.owner_role, "chunks": chunks, "created_at": _iso(d.created_at)}
+            for d, chunks in rows]
+
+
+async def delete_kb_document(s, document_id: int) -> None:
+    await s.execute(delete(KBChunk).where(KBChunk.document_id == document_id))
+    await s.execute(delete(KBDocument).where(KBDocument.id == document_id))
+
+
+async def search_chunks(s, embedding: list[float], roles: list[str] | None = None,
+                        k: int = 5) -> list[dict]:
+    """Векторный поиск ближайших чанков с фильтром по ролям. roles=None → без фильтра
+    (админ видит всё). Документы с owner_role=NULL доступны всем."""
+    dist = KBChunk.embedding.cosine_distance(embedding)
+    stmt = select(KBChunk, KBDocument.file_name, dist.label("distance")).join(
+        KBDocument, KBDocument.id == KBChunk.document_id)
+    if roles is not None:
+        stmt = stmt.where(
+            (KBDocument.owner_role.is_(None)) | (KBDocument.owner_role.in_(roles)))
+    stmt = stmt.order_by(dist).limit(k)
+    rows = (await s.execute(stmt)).all()
+    return [{"document_id": c.document_id, "file_name": fname, "text": c.chunk_text,
+             "distance": float(distance), "meta": c.meta}
+            for c, fname, distance in rows]
 
 
 def _iso(value) -> str | None:
