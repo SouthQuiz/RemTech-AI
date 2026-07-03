@@ -55,8 +55,14 @@ async def client():
     import httpx
     from httpx import ASGITransport
 
+    from app import main as main_mod
     from app.database import get_db
     from app.main import app
+
+    # сбрасываем процесс-глобальные лимитеры между тестами (issue #3)
+    main_mod._login_limiter.clear()
+    main_mod._register_limiter.clear()
+    main_mod._ws_limiter.clear()
 
     await _ensure_test_database()
     engine = create_async_engine(_TEST_URL, pool_pre_ping=True)

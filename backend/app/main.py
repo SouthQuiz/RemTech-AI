@@ -10,6 +10,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -25,14 +26,25 @@ from app import repositories as repo
 from app.config import get_settings
 from app.database import SessionLocal, get_db, init_extensions
 from app.embeddings import get_embedder
+from app.logging_config import get_logger, setup_logging
 from app.orchestrator import orchestrator
-from services import reports
+from app.ratelimit import RateLimiter
+from services import filecheck, reports
 from services.extract import detect_kind, extract_text
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 settings = get_settings()
+setup_logging(settings.log_level)
+log = get_logger("remtech.api")
+_MAX_UPLOAD = settings.max_upload_mb * 1024 * 1024
+
+# Issue #3 — лимиты частоты для чувствительных эндпоинтов (in-memory, на процесс).
+_login_limiter = RateLimiter(max_events=10, window_seconds=300)     # вход: 10 / 5 мин на ip+логин
+_register_limiter = RateLimiter(max_events=5, window_seconds=3600)  # регистрация: 5 / час на ip
+_ws_limiter = RateLimiter(max_events=30, window_seconds=60)         # сообщения ws: 30 / мин на пользователя
+
 app = FastAPI(title="Remtechnika AI")
 # CORS: только явный whitelist источников; без фолбэка на "*".
 # JWT передаётся в заголовке Authorization, cookie не используются →
@@ -63,13 +75,41 @@ async def _startup():
 
 # ── auth dependencies ────────────────────────────────────────────────────────
 
-def current_user(cred: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+async def _user_from_token(token: str, db: AsyncSession) -> dict | None:
+    """Issue #4 — проверка токена со сверкой active/роли по БД, чтобы деактивация
+    и смена роли действовали немедленно, а не до истечения JWT."""
+    claims = auth.verify(token or "")
+    if not claims:
+        return None
+    u = await repo.get_user(db, claims["user_id"])
+    if not u or not u.active:
+        return None
+    return {"user_id": u.id, "username": u.username,
+            "name": u.full_name or u.username, "role": u.role}
+
+
+async def current_user(cred: HTTPAuthorizationCredentials = Depends(_bearer),
+                       db: AsyncSession = Depends(get_db)) -> dict:
     if not cred:
         raise HTTPException(401, "Не авторизован")
-    user = auth.verify(cred.credentials)
+    user = await _user_from_token(cred.credentials, db)
     if not user:
-        raise HTTPException(401, "Неверный или истёкший токен")
+        raise HTTPException(401, "Неверный токен или аккаунт деактивирован")
     return user
+
+
+async def _read_upload_limited(file: UploadFile) -> bytes:
+    """Читает файл потоково с ограничением размера (issue #7 — защита от OOM/DoS)."""
+    chunks, size = [], 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > _MAX_UPLOAD:
+            raise HTTPException(413, f"Файл превышает лимит {settings.max_upload_mb} МБ")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def admin_user(user: dict = Depends(current_user)) -> dict:
@@ -141,8 +181,14 @@ async def api_auth_status(db: AsyncSession = Depends(get_db)):
     return {"registration_open": await auth.registration_open(db)}
 
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "?"
+
+
 @app.post("/api/register")
-async def api_register(req: RegisterReq, db: AsyncSession = Depends(get_db)):
+async def api_register(req: RegisterReq, request: Request, db: AsyncSession = Depends(get_db)):
+    if not _register_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "Слишком много попыток регистрации. Повторите позже.")
     if not await auth.registration_open(db):
         raise HTTPException(403, "Регистрация закрыта. Аккаунт заводит администратор.")
     token, err = await auth.register(db, req.username, req.password, req.full_name or "")
@@ -156,13 +202,24 @@ async def api_register(req: RegisterReq, db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/api/login")
-async def api_login(req: LoginReq, db: AsyncSession = Depends(get_db)):
+async def api_login(req: LoginReq, request: Request, db: AsyncSession = Depends(get_db)):
+    ip = _client_ip(request)
+    uname = (req.username or "").strip()
+    if not _login_limiter.allow(f"{ip}:{uname}"):
+        log.warning("rate limit: login ip=%s user=%s", ip, uname)
+        raise HTTPException(429, "Слишком много попыток входа. Повторите позже.")
     token, err = await auth.login(db, req.username, req.password)
     if err:
+        # Issue #12 — фиксируем неуспешный вход (детекция брутфорса)
+        u = await repo.get_user_by_username(db, uname)
+        if u:
+            await repo.log_activity(db, u.id, "login_failed", f"Неуспешный вход (ip {ip})")
+            await db.commit()
+        log.warning("failed login ip=%s user=%s", ip, uname)
         raise HTTPException(401, err)
-    u = await repo.get_user_by_username(db, req.username.strip())
+    u = await repo.get_user_by_username(db, uname)
     if u:
-        await repo.log_activity(db, u.id, "login", "Вход в систему")
+        await repo.log_activity(db, u.id, "login", f"Вход в систему (ip {ip})")
     await db.commit()
     return {"token": token}
 
@@ -229,7 +286,9 @@ async def api_messages(conversation_id: int, user: dict = Depends(current_user),
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...), conversation_id: int | None = Form(None),
                      user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    data = await file.read()
+    data = await _read_upload_limited(file)
+    if err := filecheck.ensure_allowed(file.filename, data):
+        raise HTTPException(400, err)
     kind = detect_kind(file.filename)
     rec = await storage.save_bytes(db, user["user_id"], conversation_id, file.filename,
                                    data, kind=kind, direction="upload")
@@ -239,7 +298,7 @@ async def api_upload(file: UploadFile = File(...), conversation_id: int | None =
 
 @app.get("/api/files/{file_id}")
 async def api_download(file_id: int, token: str = "", db: AsyncSession = Depends(get_db)):
-    u = auth.verify(token) if token else None
+    u = await _user_from_token(token, db) if token else None
     if not u:
         raise HTTPException(401, "Не авторизован")
     rec = await repo.get_file_record(db, file_id)
@@ -252,7 +311,7 @@ async def api_download(file_id: int, token: str = "", db: AsyncSession = Depends
         raise HTTPException(404, "Файл не найден")
     data, name = res
     return Response(content=data, media_type="application/octet-stream",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+                    headers={"Content-Disposition": filecheck.content_disposition(name)})
 
 
 # ── admin ────────────────────────────────────────────────────────────────────
@@ -288,8 +347,8 @@ async def api_admin_reset_password(uid: int, req: PasswordReq, admin: dict = Dep
                                    db: AsyncSession = Depends(get_db)):
     if not await repo.get_user(db, uid):
         raise HTTPException(404, "Сотрудник не найден")
-    if len(req.password) < 4:
-        raise HTTPException(400, "Пароль слишком короткий (минимум 4 символа)")
+    if err := auth.validate_password(req.password):
+        raise HTTPException(400, err)
     await repo.update_password(db, uid, auth.hash_password(req.password))
     await repo.log_activity(db, admin["user_id"], "reset_password", f"Сброшен пароль (id {uid})")
     await db.commit()
@@ -302,6 +361,8 @@ async def api_admin_set_active(uid: int, active: bool, admin: dict = Depends(adm
     if uid == admin["user_id"]:
         raise HTTPException(400, "Нельзя деактивировать самого себя")
     await repo.set_user_active(db, uid, active)
+    await repo.log_activity(db, admin["user_id"], "set_active",
+                            f"{'Активирован' if active else 'Деактивирован'} аккаунт (id {uid})")
     await db.commit()
     return {"ok": True}
 
@@ -323,6 +384,10 @@ async def api_admin_conversation_messages(cid: int, admin: dict = Depends(admin_
     conv = await repo.get_conversation(db, cid)
     if not conv:
         raise HTTPException(404, "Чат не найден")
+    if conv.user_id != admin["user_id"]:
+        await repo.log_activity(db, admin["user_id"], "admin_view_chat",
+                                f"Просмотр чужого чата (id {cid})")
+        await db.commit()
     return {"conversation": _conv_dict(conv),
             "messages": await repo.load_history(db, cid, limit=500)}
 
@@ -368,6 +433,7 @@ async def api_admin_create_model(req: ModelConfigReq, admin: dict = Depends(admi
 async def api_admin_delete_model(mc_id: int, admin: dict = Depends(admin_user),
                                  db: AsyncSession = Depends(get_db)):
     await repo.delete_model_config(db, mc_id)
+    await repo.log_activity(db, admin["user_id"], "delete_model", f"Удалена модель (id {mc_id})")
     await db.commit()
     return {"ok": True}
 
@@ -391,6 +457,7 @@ async def api_admin_create_agent(req: AgentReq, admin: dict = Depends(admin_user
 async def api_admin_delete_agent(agent_id: int, admin: dict = Depends(admin_user),
                                  db: AsyncSession = Depends(get_db)):
     await repo.delete_agent(db, agent_id)
+    await repo.log_activity(db, admin["user_id"], "delete_agent", f"Удалён агент (id {agent_id})")
     await db.commit()
     return {"ok": True}
 
@@ -407,7 +474,9 @@ async def api_admin_kb_upload(file: UploadFile = File(...),
                               admin: dict = Depends(admin_user),
                               db: AsyncSession = Depends(get_db),
                               embedder=Depends(embedder_dep)):
-    data = await file.read()
+    data = await _read_upload_limited(file)
+    if err := filecheck.ensure_allowed(file.filename, data):
+        raise HTTPException(400, err)
     text = extract_text(data, file.filename)
     if not text.strip():
         raise HTTPException(400, "Не удалось извлечь текст из документа")
@@ -429,6 +498,7 @@ async def api_admin_kb_list(admin: dict = Depends(admin_user),
 async def api_admin_kb_delete(document_id: int, admin: dict = Depends(admin_user),
                               db: AsyncSession = Depends(get_db)):
     await repo.delete_kb_document(db, document_id)
+    await repo.log_activity(db, admin["user_id"], "kb_delete", f"Удалён документ БЗ (id {document_id})")
     await db.commit()
     return {"ok": True}
 
@@ -446,6 +516,8 @@ async def _report_data(db) -> dict:
 async def api_admin_export_xlsx(admin: dict = Depends(admin_user),
                                 db: AsyncSession = Depends(get_db)):
     data = reports.build_xlsx(await _report_data(db))
+    await repo.log_activity(db, admin["user_id"], "export", "Экспорт отчёта (xlsx)")
+    await db.commit()
     return Response(content=data, media_type=_XLSX_MIME,
                     headers={"Content-Disposition": 'attachment; filename="report.xlsx"'})
 
@@ -454,6 +526,8 @@ async def api_admin_export_xlsx(admin: dict = Depends(admin_user),
 async def api_admin_export_docx(admin: dict = Depends(admin_user),
                                 db: AsyncSession = Depends(get_db)):
     data = reports.build_docx(await _report_data(db))
+    await repo.log_activity(db, admin["user_id"], "export", "Экспорт отчёта (docx)")
+    await db.commit()
     return Response(content=data, media_type=_DOCX_MIME,
                     headers={"Content-Disposition": 'attachment; filename="report.docx"'})
 
@@ -472,6 +546,8 @@ async def api_admin_export_user_docx(uid: int, admin: dict = Depends(admin_user)
                       "count": c["messages"], "items": items})
     user_dict = {"full_name": user.full_name, "username": user.username, "role": user.role}
     data = reports.build_user_docx(user_dict, convs)
+    await repo.log_activity(db, admin["user_id"], "export", f"Экспорт чатов сотрудника (id {uid})")
+    await db.commit()
     return Response(content=data, media_type=_DOCX_MIME,
                     headers={"Content-Disposition": 'attachment; filename="user_chats.docx"'})
 
@@ -481,7 +557,8 @@ async def api_admin_export_user_docx(uid: int, admin: dict = Depends(admin_user)
 @app.websocket("/ws")
 async def ws_chat(ws: WebSocket):
     token = ws.query_params.get("token", "")
-    user = auth.verify(token)
+    async with SessionLocal() as s:
+        user = await _user_from_token(token, s)   # #4 — сверка active/роли по БД
     if not user:
         await ws.close(code=4401)
         return
@@ -491,9 +568,24 @@ async def ws_chat(ws: WebSocket):
     async def emit(event: dict):
         await ws.send_text(json.dumps(event, ensure_ascii=False))
 
-    try:
-        while True:
-            msg = json.loads(await ws.receive_text())
+    while True:
+        # Issue #15 — одна битая рамка/ошибка кадра не рвёт всю WS-сессию.
+        try:
+            raw = await ws.receive_text()
+        except WebSocketDisconnect:
+            return
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            await emit({"type": "error", "text": "Некорректный формат сообщения"})
+            continue
+
+        # Issue #3 — лимит частоты сообщений на пользователя
+        if not _ws_limiter.allow(str(uid)):
+            await emit({"type": "error", "text": "Слишком часто. Подождите немного."})
+            continue
+
+        try:
             text = msg.get("text", "")
             conversation_id = msg.get("conversation_id")
             file_ids = msg.get("file_ids", [])
@@ -538,10 +630,12 @@ async def ws_chat(ws: WebSocket):
             # админ видит всю базу знаний (roles=None), сотрудник — по своей роли
             roles = None if user.get("role") == "admin" else [user.get("role", "user")]
             await orchestrator.process(conversation_id, uid, text, attachments, emit, roles, agent_id)
-    except WebSocketDisconnect:
-        return
-    except Exception as e:
-        try:
-            await emit({"type": "error", "text": f"Сбой: {e}"})
+        except WebSocketDisconnect:
+            return
         except Exception:
-            pass
+            # #15 — причину логируем на сервере, клиенту отдаём обобщённо (без внутренних деталей)
+            log.exception("ws message handling failed uid=%s", uid)
+            try:
+                await emit({"type": "error", "text": "Внутренняя ошибка обработки запроса"})
+            except Exception:
+                return

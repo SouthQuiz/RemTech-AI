@@ -14,10 +14,12 @@ from app import storage
 from app.config import get_settings
 from app.database import SessionLocal
 from app.llm import gateway
+from app.logging_config import get_logger
 from services import docgen, replicate_svc, websearch
 
 Emit = Callable[[dict], Awaitable[None]]
 settings = get_settings()
+log = get_logger("remtech.agent")
 
 SYSTEM_PROMPT = """Ты корпоративный ИИ-ассистент компании «Ремтехника» (продажа спецтехники XCMG и запчастей). Отвечаешь на русском языке.
 
@@ -119,8 +121,10 @@ class Orchestrator:
         async with lock:
             try:
                 await self._run(conversation_id, user_id, text, attachments, emit, roles, agent_id)
-            except Exception as e:
-                await emit({"type": "error", "text": f"Ошибка: {e}"})
+            except Exception:
+                # #15 — причину логируем на сервере, клиенту — обобщённо (без внутренних деталей)
+                log.exception("agent loop failed cid=%s uid=%s", conversation_id, user_id)
+                await emit({"type": "error", "text": "Внутренняя ошибка. Попробуйте ещё раз."})
 
     async def _load_history(self, cid) -> list:
         if cid not in self._histories:
@@ -223,9 +227,17 @@ class Orchestrator:
         await emit({"type": "done", "text": final_text})
 
     async def _stream_once(self, system, tools, history, emit, model_alias=None):
+        import anthropic
+
+        # #15 — ретраим по ТИПУ исключения, а не по подстроке текста
+        retryable = (anthropic.RateLimitError, anthropic.InternalServerError,
+                     anthropic.APITimeoutError, anthropic.APIConnectionError)
         last_err = None
+        streamed = False
 
         async def on_delta(chunk):
+            nonlocal streamed
+            streamed = True
             await emit({"type": "delta", "text": chunk})
 
         for attempt in range(4):
@@ -233,12 +245,13 @@ class Orchestrator:
                 return await gateway.run(model_alias, system, tools, history, on_delta)
             except Exception as e:
                 last_err = e
-                err = str(e).lower()
-                if "rate_limit" in err or "529" in err or "overloaded" in err:
-                    await emit({"type": "status", "text": "Сервис занят, повтор..."})
-                    await asyncio.sleep(30 if attempt == 0 else 60)
-                else:
+                # если часть ответа уже ушла клиенту — не повторяем (иначе дубль на фронте)
+                if streamed or not isinstance(e, retryable):
+                    log.warning("llm stream error (no retry): %s", type(e).__name__)
                     raise
+                log.warning("llm stream retry %d: %s", attempt + 1, type(e).__name__)
+                await emit({"type": "status", "text": "Сервис занят, повтор..."})
+                await asyncio.sleep(min(30 * (attempt + 1), 60))
         raise last_err
 
     async def _save_file(self, uid, cid, name, data, kind, emit, event_type):

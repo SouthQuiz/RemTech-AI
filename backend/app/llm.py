@@ -12,8 +12,10 @@ import anthropic
 from app import repositories as repo
 from app.config import get_settings
 from app.database import SessionLocal
+from app.logging_config import get_logger
 
 settings = get_settings()
+log = get_logger("remtech.llm")
 OnDelta = Callable[[str], Awaitable[None]]
 
 
@@ -63,10 +65,14 @@ class ModelGateway:
 
         try:
             return await make_provider(provider_name, model).run(system, tools, messages, on_delta)
-        except Exception:
+        except Exception as primary:
+            # #15 — не глотаем первопричину: логируем до попытки fallback
+            log.warning("provider '%s' failed: %s: %s", provider_name,
+                        type(primary).__name__, primary)
             if fallback:
                 fb = await _load_config(fallback)
                 if fb:
+                    log.info("switching to fallback '%s'", fallback)
                     return await make_provider(
                         fb.provider, fb.endpoint or settings.model
                     ).run(system, tools, messages, on_delta)

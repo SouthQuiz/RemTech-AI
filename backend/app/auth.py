@@ -66,14 +66,19 @@ async def registration_open(s) -> bool:
 MIN_PASSWORD_LEN = 8
 
 
-def _validate(username: str, password: str) -> str | None:
-    if len(username.strip()) < 3:
-        return "Логин слишком короткий (минимум 3 символа)"
+def validate_password(password: str) -> str | None:
+    """Единая парольная политика (issue #10): длина + буквы и цифры."""
     if len(password) < MIN_PASSWORD_LEN:
         return f"Пароль слишком короткий (минимум {MIN_PASSWORD_LEN} символов)"
     if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
         return "Пароль должен содержать буквы и цифры"
     return None
+
+
+def _validate(username: str, password: str) -> str | None:
+    if len(username.strip()) < 3:
+        return "Логин слишком короткий (минимум 3 символа)"
+    return validate_password(password)
 
 
 async def register(s, username: str, password: str,

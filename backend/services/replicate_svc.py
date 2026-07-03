@@ -7,9 +7,22 @@ import httpx
 import replicate
 
 from app.config import get_settings
+from app.logging_config import get_logger
 
+log = get_logger("remtech.media")
 _token = get_settings().replicate_api_token
 _client = replicate.Client(api_token=_token) if _token else None
+_IMAGE_TIMEOUT = 180    # сек — генерация/редактирование изображения
+_VIDEO_TIMEOUT = 600    # сек — генерация видео
+
+
+async def _run_with_timeout(fn, *args, timeout: int):
+    """Внешний вызов с таймаутом (#15): по истечении — None, без зависания потока."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=timeout)
+    except asyncio.TimeoutError:
+        log.warning("replicate call timed out after %ss", timeout)
+        return None
 
 
 def _read_output(output) -> bytes | None:
@@ -21,8 +34,8 @@ def _read_output(output) -> bytes | None:
             return httpx.get(str(output.url), timeout=120).content
         url = str(output[0]) if hasattr(output, "__getitem__") else str(output)
         return httpx.get(url, timeout=120).content
-    except Exception as e:
-        print(f"Replicate read error: {e}")
+    except Exception:
+        log.exception("Replicate read error")
         return None
 
 
@@ -40,13 +53,13 @@ def _generate_flux_sync(prompt: str) -> bytes | None:
             },
         )
         return _read_output(output)
-    except Exception as e:
-        print(f"FLUX error: {e}")
+    except Exception:
+        log.exception("FLUX generate error")
         return None
 
 
 async def generate_image_flux(prompt: str) -> bytes | None:
-    return await asyncio.to_thread(_generate_flux_sync, prompt)
+    return await _run_with_timeout(_generate_flux_sync, prompt, timeout=_IMAGE_TIMEOUT)
 
 
 def _edit_image_flux_sync(image_bytes: bytes, instruction: str) -> bytes | None:
@@ -65,13 +78,14 @@ def _edit_image_flux_sync(image_bytes: bytes, instruction: str) -> bytes | None:
             },
         )
         return _read_output(output)
-    except Exception as e:
-        print(f"FLUX edit error: {e}")
+    except Exception:
+        log.exception("FLUX edit error")
         return None
 
 
 async def edit_image_flux(image_bytes: bytes, instruction: str) -> bytes | None:
-    return await asyncio.to_thread(_edit_image_flux_sync, image_bytes, instruction)
+    return await _run_with_timeout(_edit_image_flux_sync, image_bytes, instruction,
+                                   timeout=_IMAGE_TIMEOUT)
 
 
 def _generate_video_sync(prompt: str, image_bytes: bytes | None = None, duration: int = 5) -> bytes | None:
@@ -84,10 +98,11 @@ def _generate_video_sync(prompt: str, image_bytes: bytes | None = None, duration
             params["start_image"] = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
         output = _client.run("kwaivgi/kling-v2.6", input=params)
         return _read_output(output)
-    except Exception as e:
-        print(f"Kling video error: {e}")
+    except Exception:
+        log.exception("Kling video error")
         return None
 
 
 async def generate_video(prompt: str, image_bytes: bytes | None = None, duration: int = 5) -> bytes | None:
-    return await asyncio.to_thread(_generate_video_sync, prompt, image_bytes, duration)
+    return await _run_with_timeout(_generate_video_sync, prompt, image_bytes, duration,
+                                   timeout=_VIDEO_TIMEOUT)

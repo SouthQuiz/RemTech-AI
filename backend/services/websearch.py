@@ -33,6 +33,44 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
     return True, ""
 
 
+_TIMEOUT = 10.0
+_MAX_BYTES = 3_000_000
+_MAX_HOPS = 3
+
+
+class _UnsafeRedirect(Exception):
+    pass
+
+
+def _fetch_html(url: str) -> str:
+    """Загружает HTML вручную, ревалидируя адрес на КАЖДОМ хопе редиректа
+    (issue #8): trafilatura следовал редиректам без повторной проверки, что
+    позволяло увести запрос на внутренний адрес. Плюс таймаут и лимит размера."""
+    import httpx
+
+    headers = {"User-Agent": "RemTechAI/1.0 (+internal)"}
+    with httpx.Client(follow_redirects=False, timeout=_TIMEOUT, headers=headers) as client:
+        for _ in range(_MAX_HOPS + 1):
+            ok, reason = _is_safe_url(url)
+            if not ok:
+                raise _UnsafeRedirect(reason)
+            with client.stream("GET", url) as r:
+                if r.is_redirect:
+                    loc = r.headers.get("location")
+                    if not loc:
+                        raise _UnsafeRedirect("редирект без адреса")
+                    url = str(r.url.join(loc))
+                    continue
+                chunks, size = [], 0
+                for chunk in r.iter_bytes():
+                    size += len(chunk)
+                    if size > _MAX_BYTES:
+                        break
+                    chunks.append(chunk)
+                return b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
+        raise _UnsafeRedirect("слишком много редиректов")
+
+
 def read_url(url: str) -> str:
     ok, reason = _is_safe_url(url)
     if not ok:
@@ -40,8 +78,11 @@ def read_url(url: str) -> str:
 
     import trafilatura
 
-    downloaded = trafilatura.fetch_url(url)
-    if not downloaded:
+    try:
+        downloaded = _fetch_html(url)
+    except _UnsafeRedirect as e:
+        return f"Ссылка отклонена: {e}."
+    except Exception:
         return "Не удалось загрузить страницу."
     text = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
     if not text:

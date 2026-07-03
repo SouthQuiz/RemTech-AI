@@ -1,5 +1,27 @@
 """Извлечение текста из загруженных файлов для передачи в контекст Claude."""
 import io
+import zipfile
+
+# Issue #7 — защита от decompression-bomb для офисных форматов (zip-контейнеры).
+_MAX_UNCOMPRESSED = 200 * 1024 * 1024   # суммарный распакованный размер
+_MAX_RATIO = 200                         # предел коэффициента сжатия
+
+
+class DecompressionBomb(Exception):
+    pass
+
+
+def _guard_zip(data: bytes) -> None:
+    """Отклоняет офисный файл, если распакованный объём/коэффициент сжатия
+    подозрительно велики (zip-bomb)."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return  # не zip — пусть парсер сам разберётся
+    total = sum(i.file_size for i in zf.infolist())
+    comp = sum(i.compress_size for i in zf.infolist()) or 1
+    if total > _MAX_UNCOMPRESSED or total / comp > _MAX_RATIO:
+        raise DecompressionBomb("подозрительно высокая степень сжатия")
 
 
 def detect_kind(filename: str) -> str:
@@ -38,6 +60,7 @@ def extract_text(data: bytes, filename: str) -> str:
 
 
 def _docx_text(data: bytes) -> str:
+    _guard_zip(data)
     from docx import Document
     doc = Document(io.BytesIO(data))
     parts = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -57,6 +80,7 @@ def _pdf_text(data: bytes) -> str:
 
 
 def _xlsx_text(data: bytes) -> str:
+    _guard_zip(data)
     from openpyxl import load_workbook
     wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     parts = []
@@ -70,6 +94,7 @@ def _xlsx_text(data: bytes) -> str:
 
 
 def _pptx_text(data: bytes) -> str:
+    _guard_zip(data)
     from pptx import Presentation
     prs = Presentation(io.BytesIO(data))
     parts = []
