@@ -63,13 +63,16 @@ _bearer = HTTPBearer(auto_error=False)
 @app.on_event("startup")
 async def _startup():
     await init_extensions()
-    # Сид дефолтной модели для шлюза, если реестр пуст.
+    # Сид моделей шлюза: основная (claude) + реальный резерв (claude-fast, тот же
+    # провайдер, быстрая модель) — issue #21. Yandex/vLLM-провайдеры — стадия 2b.
     async with SessionLocal() as s:
         if not await repo.get_model_config_by_alias(s, settings.default_model):
+            if not await repo.get_model_config_by_alias(s, settings.fallback_model):
+                await repo.create_model_config(
+                    s, settings.fallback_model, "anthropic", settings.model_fast, None)
             await repo.create_model_config(
                 s, settings.default_model, "anthropic",
-                settings.model, settings.fallback_model,
-            )
+                settings.model, settings.fallback_model)
             await s.commit()
 
 

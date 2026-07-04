@@ -40,12 +40,15 @@ class AnthropicProvider:
 
 
 def make_provider(provider: str, model: str):
-    """Фабрика провайдера по имени. Расширяется в стадии 2b (LiteLLM/Yandex/vLLM)."""
+    """Фабрика провайдера по имени. Anthropic реализован (в т.ч. через egress-прокси
+    base_url). Yandex/vLLM/OpenAI/Gemini — стадия 2b (нужны ключи/локальный сервер)."""
     base_url = settings.egress_proxy_url or None
     if provider in ("anthropic", "claude"):
         return AnthropicProvider(model=model or settings.model,
                                  api_key=settings.anthropic_api_key, base_url=base_url)
-    raise NotImplementedError(f"Провайдер «{provider}» пока не реализован (стадия 2b)")
+    raise NotImplementedError(
+        f"Провайдер «{provider}» пока не реализован (стадия 2b: нужны ключи/сервер). "
+        f"Настройте агента на доступный провайдер (anthropic).")
 
 
 async def _load_config(alias: str):
@@ -66,17 +69,21 @@ class ModelGateway:
         try:
             return await make_provider(provider_name, model).run(system, tools, messages, on_delta)
         except Exception as primary:
-            # #15 — не глотаем первопричину: логируем до попытки fallback
+            # #15/#21 — не глотаем первопричину: логируем и, если fallback недоступен,
+            # пробрасываем именно ИСХОДНУЮ ошибку основного провайдера.
             log.warning("provider '%s' failed: %s: %s", provider_name,
                         type(primary).__name__, primary)
-            if fallback:
-                fb = await _load_config(fallback)
-                if fb:
+            fb = await _load_config(fallback) if fallback else None
+            if fb:
+                try:
                     log.info("switching to fallback '%s'", fallback)
                     return await make_provider(
                         fb.provider, fb.endpoint or settings.model
                     ).run(system, tools, messages, on_delta)
-            raise
+                except Exception as fb_err:
+                    log.warning("fallback '%s' unavailable: %s: %s", fallback,
+                                type(fb_err).__name__, fb_err)
+            raise primary
 
 
 gateway = ModelGateway()

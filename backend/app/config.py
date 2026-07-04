@@ -37,10 +37,12 @@ class Settings(BaseSettings):
     model: str = "claude-sonnet-4-6"
     model_fast: str = "claude-haiku-4-5-20251001"
     max_tokens: int = 16000
-    egress_proxy_url: str = ""       # обратный прокси к зарубежным моделям
-    default_model: str = "claude"    # алиас основной модели (per-agent override)
-    fallback_model: str = "yandex"   # резерв при недоступности прокси
-    vllm_base_url: str = ""          # локальная модель (RAG/приватное)
+    egress_proxy_url: str = ""            # обратный прокси к зарубежным моделям (стадия 2b)
+    default_model: str = "claude"         # алиас основной модели (per-agent override)
+    # Реальный резерв: быстрая модель того же провайдера при перегрузке основной.
+    # Yandex/vLLM как fallback — стадия 2b (нужны ключи/локальный сервер), см. issue #21.
+    fallback_model: str = "claude-fast"
+    vllm_base_url: str = ""               # локальная модель (RAG/приватное) — стадия 2b
 
     # ── медиа ──────────────────────────────────────────────────────────────────
     replicate_api_token: str = ""

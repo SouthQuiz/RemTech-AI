@@ -1,4 +1,6 @@
 """EPIC-02 (2a) — тесты реестра моделей/агентов и маршрутизации шлюза."""
+import pytest
+
 from app import llm
 from app import repositories as repo
 
@@ -77,3 +79,28 @@ async def test_gateway_fallback_on_failure(monkeypatch):
     res = await llm.gateway.run(None, "sys", [], [], on_delta)
     assert res == "fb-result"
     assert primary.calls == 1 and fallback.calls == 1
+
+
+async def test_gateway_reraises_primary_when_fallback_unavailable(monkeypatch):
+    # #21 — если fallback-провайдер не реализован, наружу идёт ИСХОДНАЯ ошибка,
+    # а не NotImplementedError, маскирующий первопричину.
+    class Cfg:
+        provider, endpoint, fallback_to = "anthropic", "claude-x", "yandex"
+    class Fb:
+        provider, endpoint, fallback_to = "yandex", "y-model", None
+
+    async def fake_load(alias):
+        return Fb() if alias == "yandex" else Cfg()
+    monkeypatch.setattr(llm, "_load_config", fake_load)
+
+    def make(provider, model):
+        if provider == "yandex":
+            raise NotImplementedError("yandex не реализован (стадия 2b)")
+        return _Stub(fail=True)   # основной падает RuntimeError("provider down")
+    monkeypatch.setattr(llm, "make_provider", make)
+
+    async def on_delta(c):
+        pass
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await llm.gateway.run(None, "sys", [], [], on_delta)
