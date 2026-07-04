@@ -37,16 +37,23 @@ def chunk_text(text: str, max_chars: int = 1200, overlap: int = 200) -> list[str
     return chunks
 
 
-async def ingest_document(session, embedder, file_name: str, text: str,
-                          owner_role: str | None = None, source: str = "upload") -> dict:
-    """Индексирует документ: создаёт kb_document и его чанки с эмбеддингами."""
+async def ingest_chunks(session, embedder, document_id: int, text: str) -> int:
+    """Тяжёлая часть конвейера: чанкинг + эмбеддинги + запись kb_chunks.
+    Выделена отдельно, чтобы выполняться как фоновая Celery-задача (issue #22)."""
     pieces = chunk_text(text)
-    doc = await repo.create_kb_document(session, file_name, source, owner_role)
     if pieces:
         embeddings = await embedder.embed_many(pieces)
         rows = [(pieces[i], embeddings[i], {"i": i}) for i in range(len(pieces))]
-        await repo.add_chunks(session, doc.id, rows)
-    return {"document_id": doc.id, "file_name": file_name, "chunks": len(pieces)}
+        await repo.add_chunks(session, document_id, rows)
+    return len(pieces)
+
+
+async def ingest_document(session, embedder, file_name: str, text: str,
+                          owner_role: str | None = None, source: str = "upload") -> dict:
+    """Индексирует документ синхронно (inline): создаёт kb_document и его чанки."""
+    doc = await repo.create_kb_document(session, file_name, source, owner_role)
+    n = await ingest_chunks(session, embedder, doc.id, text)
+    return {"document_id": doc.id, "file_name": file_name, "chunks": n}
 
 
 async def search(session, embedder, query: str, roles: list[str] | None = None,

@@ -42,6 +42,8 @@ services:
       APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-remtech}:${POSTGRES_PASSWORD:-remtech}@postgres:5432/${POSTGRES_DB:-remtech}
       REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      KB_ASYNC_INGEST: "true"        # ингест БЗ — через Celery-воркер (issue #22)
     depends_on:
       postgres:
         condition: service_healthy
@@ -49,6 +51,39 @@ services:
         condition: service_healthy
     volumes:
       - filesdata:/app/data
+    restart: unless-stopped
+
+  # Celery-воркер: фоновый конвейер ингеста базы знаний (issue #22)
+  worker:
+    build:
+      context: ./backend
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-remtech}:${POSTGRES_PASSWORD:-remtech}@postgres:5432/${POSTGRES_DB:-remtech}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - filesdata:/app/data
+    restart: unless-stopped
+
+  # Локальный эмбеддер bge-m3 (issue #22 — раньше эмбеддер был недостижим в compose).
+  # После первого старта выполнить: docker compose exec ollama ollama pull bge-m3
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollamadata:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   caddy:
@@ -69,5 +104,6 @@ volumes:
   pgdata:
   redisdata:
   filesdata:
+  ollamadata:
   caddydata:
   caddyconfig:

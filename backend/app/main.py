@@ -480,12 +480,20 @@ async def api_admin_kb_upload(file: UploadFile = File(...),
     text = extract_text(data, file.filename)
     if not text.strip():
         raise HTTPException(400, "Не удалось извлечь текст из документа")
-    res = await kb.ingest_document(db, embedder, file.filename, text,
-                                   owner_role=owner_role or None)
-    await repo.log_activity(db, admin["user_id"], "kb_upload",
-                            f"{file.filename} ({res['chunks']} чанков)")
+
+    # Документ создаём сразу; тяжёлый чанкинг+эмбеддинги — вне HTTP-запроса (issue #22).
+    doc = await repo.create_kb_document(db, file.filename, "upload", owner_role or None)
+    await repo.log_activity(db, admin["user_id"], "kb_upload", file.filename)
     await db.commit()
-    return res
+
+    if settings.kb_async_ingest:
+        from app.tasks import ingest_document_task
+        ingest_document_task.delay(doc.id, text)
+        return {"document_id": doc.id, "file_name": file.filename, "status": "processing"}
+
+    n = await kb.ingest_chunks(db, embedder, doc.id, text)
+    await db.commit()
+    return {"document_id": doc.id, "file_name": file.filename, "chunks": n, "status": "ready"}
 
 
 @app.get("/api/admin/kb")

@@ -71,9 +71,17 @@ class OllamaEmbedder:
             return await self._one(client, text)
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        # #22 — считаем эмбеддинги батчем с ограниченной конкуренцией (было
+        # последовательно по одному → большие документы индексировались минутами).
         import httpx
+
+        sem = asyncio.Semaphore(4)
         async with httpx.AsyncClient() as client:
-            return [await self._one(client, t) for t in texts]
+            async def _bounded(t: str) -> list[float]:
+                async with sem:
+                    return await self._one(client, t)
+            # gather сохраняет порядок результатов соответственно входу
+            return list(await asyncio.gather(*(_bounded(t) for t in texts)))
 
 
 def get_embedder():

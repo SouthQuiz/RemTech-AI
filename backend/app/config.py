@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     embed_model: str = "bge-m3"
     embed_dim: int = 1024
     kb_top_k: int = 5
+    kb_async_ingest: bool = False    # True → ингест через Celery-воркер (issue #22)
 
     # ── файлы / документы ──────────────────────────────────────────────────────
     files_dir: str = "data/files"
