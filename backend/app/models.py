@@ -12,6 +12,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -115,6 +116,16 @@ class KBDocument(Base):
 
 class KBChunk(Base):
     __tablename__ = "kb_chunks"
+    # HNSW-индекс для косинусного поиска (issue #14 / TASK-0302): без него —
+    # полный скан на каждый RAG-запрос. Метрика должна совпадать с cosine_distance.
+    __table_args__ = (
+        Index(
+            "ix_kb_chunks_embedding_hnsw", "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("kb_documents.id"), index=True)
