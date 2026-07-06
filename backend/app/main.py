@@ -220,13 +220,14 @@ async def api_login(req: LoginReq, request: Request, db: AsyncSession = Depends(
         # Issue #12 — фиксируем неуспешный вход (детекция брутфорса)
         u = await repo.get_user_by_username(db, uname)
         if u:
-            await repo.log_activity(db, u.id, "login_failed", f"Неуспешный вход (ip {ip})")
+            # IP не пишем в журнал (виден админам) — он остаётся в серверных логах ниже
+            await repo.log_activity(db, u.id, "login_failed", "Неуспешный вход")
             await db.commit()
         log.warning("failed login ip=%s user=%s", ip, uname)
         raise HTTPException(401, err)
     u = await repo.get_user_by_username(db, uname)
     if u:
-        await repo.log_activity(db, u.id, "login", f"Вход в систему (ip {ip})")
+        await repo.log_activity(db, u.id, "login", "Вход в систему")
     await db.commit()
     return {"token": token}
 
