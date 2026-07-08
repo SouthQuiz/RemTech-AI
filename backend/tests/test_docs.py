@@ -71,6 +71,25 @@ def test_create_proposal_pdf():
     assert out[:5] == b"%PDF-" and len(out) > 1000
 
 
+def test_create_estimate():
+    # issue #27 — Excel-смета с настоящими формулами
+    from openpyxl import load_workbook
+    data = {
+        "title": "Смета на ТО", "client": "ООО «Тест»", "markup_percent": 10,
+        "items": [
+            {"name": "Работа механика", "unit": "ч", "qty": 8, "price": 3600},
+            {"name": "Масло моторное", "unit": "л", "qty": 20, "price": 450},
+        ],
+    }
+    out = docgen.create_estimate(data)
+    ws = load_workbook(io.BytesIO(out)).active   # формулы как строки
+    cells = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
+    joined = " ".join(cells)
+    assert "Работа механика" in joined and "ИТОГО" in joined
+    assert any(v.startswith("=ROUND") for v in cells)   # сумма позиции — формула
+    assert any(v.startswith("=SUM(") for v in cells)     # итог — формула
+
+
 def test_fill_template():
     # issue #26 — подстановка {{ПОЛЕ}} с сохранением структуры
     from docx import Document

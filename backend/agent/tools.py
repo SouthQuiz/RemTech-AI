@@ -195,6 +195,39 @@ TOOLS = [
         },
     },
     {
+        "name": "create_estimate",
+        "description": (
+            "Создаёт смету/бюджет в Excel (.xlsx) с позициями, настоящими формулами "
+            "(суммы и итог считаются в Excel) и фирменным оформлением. Используй когда "
+            "просят составить смету, расчёт стоимости или бюджет в таблице."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Имя файла без расширения"},
+                "title": {"type": "string", "description": "Название сметы"},
+                "client": {"type": "string", "description": "Заказчик (опционально)"},
+                "markup_percent": {"type": "number", "description": "Наценка в процентах", "default": 0},
+                "notes": {"type": "string", "description": "Примечания (опционально)"},
+                "items": {
+                    "type": "array",
+                    "description": "Позиции сметы",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Наименование"},
+                            "unit": {"type": "string", "description": "Единица измерения, напр. шт/м/ч"},
+                            "qty": {"type": "number", "description": "Количество", "default": 1},
+                            "price": {"type": "number", "description": "Цена за единицу, ₽"},
+                        },
+                        "required": ["name", "price"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+    {
         "name": "fill_template",
         "description": (
             "Заполняет загруженный .docx-шаблон: подставляет значения в поля вида "

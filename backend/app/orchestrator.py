@@ -355,6 +355,13 @@ class Orchestrator:
                 items = params.get("items") or []
                 return f"КП «{base}» создано в {' и '.join(made)} ({len(items)} позиций) и отправлено пользователю."
 
+            if name == "create_estimate":
+                d = await asyncio.to_thread(docgen.create_estimate, params)
+                fname = (params.get("filename") or "Смета") + ".xlsx"
+                await self._save_file(uid, cid, fname, d, "xlsx", emit, "document")
+                items = params.get("items") or []
+                return f"Смета «{fname}» создана ({len(items)} позиций) и отправлена пользователю."
+
             if name == "fill_template":
                 cur = await self.state.get_docx(cid)
                 if not cur:

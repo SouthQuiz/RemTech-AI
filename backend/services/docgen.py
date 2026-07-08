@@ -363,6 +363,101 @@ def create_proposal(data: dict) -> bytes:
     return buf.getvalue()
 
 
+def create_estimate(data: dict) -> bytes:
+    """Issue #27 — смета/бюджет в Excel (.xlsx) с формулами и фирменным оформлением.
+
+    data: {title, client, notes, markup_percent, items:[{name, unit, qty, price}]}.
+    Суммы и итог — настоящие Excel-формулы (лист остаётся редактируемым)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    from services.docx_style import BAND, DARK, YELLOW
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Смета"
+
+    thin = Side(style="thin", color="BFBFBF")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    money = "# ##0"
+
+    headers = ["№", "Наименование", "Ед.", "Кол-во", "Цена, ₽", "Сумма, ₽"]
+    ncols = len(headers)
+
+    # Титул
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    c = ws.cell(1, 1, (data.get("title") or "Смета").upper())
+    c.font = Font(bold=True, size=14, color=DARK)
+    c.fill = PatternFill("solid", fgColor=YELLOW)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 26
+    row = 2
+    if data.get("client"):
+        ws.cell(row, 1, f"Заказчик: {data['client']}").font = Font(size=10)
+        row += 1
+    row += 1
+
+    # Шапка таблицы
+    head_row = row
+    for i, h in enumerate(headers, 1):
+        cell = ws.cell(head_row, i, h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor=DARK)
+        cell.alignment = center
+        cell.border = box
+    row += 1
+
+    markup = float(data.get("markup_percent") or 0)
+    factor = 1 + markup / 100
+    first = row
+    for idx, it in enumerate(data.get("items") or [], 1):
+        qty = float(it.get("qty") or 1)
+        price = float(it.get("price") or 0)
+        vals = [idx, str(it.get("name", "")), str(it.get("unit") or "шт"), qty, price]
+        for i, v in enumerate(vals, 1):
+            cell = ws.cell(row, i, v)
+            cell.border = box
+            cell.alignment = left if i == 2 else center
+            if i in (4, 5):
+                cell.number_format = money
+        # Сумма — формула: Кол-во * Цена * (1 + наценка)
+        s = ws.cell(row, 6, f"=ROUND(D{row}*E{row}*{factor},0)")
+        s.border = box
+        s.number_format = money
+        s.alignment = center
+        if idx % 2 == 0:
+            for i in range(1, ncols + 1):
+                ws.cell(row, i).fill = PatternFill("solid", fgColor=BAND)
+        row += 1
+    last = row - 1
+
+    # ИТОГО — формула SUM
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+    tl = ws.cell(row, 1, "ИТОГО" + (f" (с наценкой {markup:g}%)" if markup else ""))
+    tl.font = Font(bold=True)
+    tl.alignment = Alignment(horizontal="right", vertical="center")
+    tl.fill = PatternFill("solid", fgColor=YELLOW)
+    total = ws.cell(row, 6, f"=SUM(F{first}:F{last})" if last >= first else 0)
+    total.font = Font(bold=True)
+    total.number_format = money
+    total.fill = PatternFill("solid", fgColor=YELLOW)
+    total.border = box
+    tl.border = box
+    row += 2
+
+    if data.get("notes"):
+        ws.cell(row, 1, str(data["notes"])).font = Font(size=10, italic=True)
+
+    for col, w in zip("ABCDEF", (5, 42, 8, 10, 14, 16)):
+        ws.column_dimensions[col].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 _PLACEHOLDER_RE = re.compile(r"\{\{([^}]+)\}\}")
 
 
