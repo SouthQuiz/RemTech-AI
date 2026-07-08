@@ -50,6 +50,7 @@ export const api = {
   register: (username, password, full_name) =>
     req("/register", { method: "POST", json: { username, password, full_name } }),
   me: () => req("/me"),
+  ticket: () => req("/ticket", { method: "POST" }),
   agents: () => req("/agents"),
   adminCreateUser: (username, password, full_name, role) =>
     req("/admin/users", { method: "POST", json: { username, password, full_name, role } }),
@@ -82,8 +83,17 @@ export const api = {
     uploadForm("/upload", file, { conversation_id: conversationId }),
 };
 
-export function fileUrl(fileId) {
-  return `/api/files/${fileId}?token=${encodeURIComponent(getToken())}`;
+// #4 — файлы грузим через fetch с заголовком Authorization (токена в URL нет).
+export async function fileBlobUrl(fileId) {
+  const res = await fetch(`/api/files/${fileId}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new Error("Не удалось загрузить файл");
+  return URL.createObjectURL(await res.blob());
+}
+
+export async function downloadFile(fileId, filename) {
+  await downloadAuthed(`/files/${fileId}`, filename);
 }
 
 export async function downloadAuthed(path, filename) {
@@ -102,7 +112,9 @@ export async function downloadAuthed(path, filename) {
   URL.revokeObjectURL(url);
 }
 
-export function openSocket() {
+// #4 — WebSocket: одноразовый тикет вместо long-lived JWT в URL.
+export async function openSocket() {
+  const { ticket } = await api.ticket();
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  return new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(getToken())}`);
+  return new WebSocket(`${proto}://${location.host}/ws?ticket=${encodeURIComponent(ticket)}`);
 }

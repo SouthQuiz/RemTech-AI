@@ -57,8 +57,8 @@ async def test_file_ownership_idor(client):
                            files={"file": ("secret.txt", b"hello", "text/plain")})
     fid = up.json()["file_id"]
 
-    # директор (другой пользователь) не может скачать чужой файл — но он admin → можно
-    admin_dl = await client.get(f"/api/files/{fid}", params={"token": admin})
+    # #4 — авторизация скачивания по заголовку Authorization (не token в URL)
+    admin_dl = await client.get(f"/api/files/{fid}", headers=_auth(admin))
     assert admin_dl.status_code == 200
 
     # заведём второго обычного сотрудника — ему чужой файл недоступен (IDOR → 403)
@@ -66,7 +66,7 @@ async def test_file_ownership_idor(client):
                       json={"username": "pavel", "password": "pass1234", "role": "user"},
                       headers=_auth(admin))
     pavel = (await client.post("/api/login", json={"username": "pavel", "password": "pass1234"})).json()["token"]
-    forbidden = await client.get(f"/api/files/{fid}", params={"token": pavel})
+    forbidden = await client.get(f"/api/files/{fid}", headers=_auth(pavel))
     assert forbidden.status_code == 403
 
 

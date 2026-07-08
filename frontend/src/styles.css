@@ -606,6 +606,7 @@ h1, h2, h3, .brand-name { letter-spacing: -0.02em; }
 .doc-link {
   display: inline-flex; align-items: center; gap: 8px; padding: 9px 13px;
   border-radius: 9px; text-decoration: none; font-size: 13px; font-weight: 500;
+  border: none; cursor: pointer; font-family: inherit;
 }
 .doc-link i { font-size: 17px; }
 .doc-link.docx { background: var(--docx-bg); color: var(--docx-fg); }

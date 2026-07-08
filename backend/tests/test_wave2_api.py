@@ -31,6 +31,14 @@ async def test_deactivated_token_rejected_immediately(client):
     assert (await client.get("/api/me", headers=_auth(anna))).status_code == 401
 
 
+async def test_ticket_requires_auth_and_issues(client):
+    # #4 — тикет для WS выдаётся только по заголовку Authorization
+    assert (await client.post("/api/ticket")).status_code == 401
+    admin = await _register_admin(client)
+    r = await client.post("/api/ticket", headers=_auth(admin))
+    assert r.status_code == 200 and r.json()["ticket"]
+
+
 async def test_upload_rejects_bad_magic(client):
     admin = await _register_admin(client)
     # .pdf по имени, но содержимое не PDF → 400

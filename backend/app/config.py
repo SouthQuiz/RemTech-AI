@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # ── auth ─────────────────────────────────────────────────────────────────
     jwt_secret: str = _DEFAULT_JWT
-    jwt_ttl_hours: int = 168
+    jwt_ttl_hours: int = 24    # issue #4 — сокращён с 168ч; refresh-токены — отдельная задача
 
     # ── db / очереди ───────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://remtech:remtech@localhost:5432/remtech"

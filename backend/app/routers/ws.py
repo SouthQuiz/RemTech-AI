@@ -6,8 +6,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app import repositories as repo
 from app import storage
 from app.database import SessionLocal
-from app.deps import _user_from_token, _ws_limiter, log, role_can_use_agent
+from app.deps import _ws_limiter, log, role_can_use_agent
 from app.orchestrator import orchestrator
+from app.tickets import tickets
 from services.extract import detect_kind, extract_text
 
 router = APIRouter()
@@ -15,9 +16,16 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def ws_chat(ws: WebSocket):
-    token = ws.query_params.get("token", "")
+    # #4 — авторизация по одноразовому тикету (не long-lived JWT в URL)
+    uid_from_ticket = tickets.consume(ws.query_params.get("ticket", ""))
+    if not uid_from_ticket:
+        await ws.close(code=4401)
+        return
     async with SessionLocal() as s:
-        user = await _user_from_token(token, s)   # #4 — сверка active/роли по БД
+        u = await repo.get_user(s, uid_from_ticket)
+        user = None if not u or not u.active else {
+            "user_id": u.id, "username": u.username,
+            "name": u.full_name or u.username, "role": u.role}
     if not user:
         await ws.close(code=4401)
         return

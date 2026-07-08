@@ -13,6 +13,7 @@ from app.deps import (
     log,
 )
 from app.schemas import LoginReq, RegisterReq
+from app.tickets import tickets
 
 router = APIRouter()
 
@@ -69,3 +70,9 @@ async def api_login(req: LoginReq, request: Request, db: AsyncSession = Depends(
 @router.get("/api/me")
 async def api_me(user: dict = Depends(current_user)):
     return user
+
+
+@router.post("/api/ticket")
+async def api_ticket(user: dict = Depends(current_user)):
+    """Issue #4 — одноразовый короткоживущий тикет для WebSocket (вместо JWT в URL)."""
+    return {"ticket": tickets.issue(user["user_id"])}

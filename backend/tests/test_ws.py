@@ -16,7 +16,8 @@ def test_ws_rejects_missing_token():
             pass
 
 
-def test_ws_rejects_bad_token():
+def test_ws_rejects_bad_ticket():
+    # #4 — авторизация по тикету; неизвестный тикет отвергается
     with pytest.raises(WebSocketDisconnect):
-        with _client.websocket_connect("/ws?token=garbage.token.value"):
+        with _client.websocket_connect("/ws?ticket=garbage-ticket"):
             pass

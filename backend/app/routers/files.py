@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import repositories as repo
 from app import storage
 from app.database import get_db
-from app.deps import _read_upload_limited, _user_from_token, current_user
+from app.deps import _read_upload_limited, current_user
 from services import filecheck
 from services.extract import detect_kind
 
@@ -27,10 +27,10 @@ async def api_upload(file: UploadFile = File(...), conversation_id: int | None =
 
 
 @router.get("/api/files/{file_id}")
-async def api_download(file_id: int, token: str = "", db: AsyncSession = Depends(get_db)):
-    u = await _user_from_token(token, db) if token else None
-    if not u:
-        raise HTTPException(401, "Не авторизован")
+async def api_download(file_id: int, u: dict = Depends(current_user),
+                       db: AsyncSession = Depends(get_db)):
+    # #4 — авторизация по заголовку Authorization (фронт грузит файл через fetch/blob),
+    # токен больше не передаётся в URL.
     rec = await repo.get_file_record(db, file_id)
     if not rec:
         raise HTTPException(404, "Файл не найден")

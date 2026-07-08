@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, getToken, clearToken, openSocket, fileUrl } from "./api.js";
+import { api, getToken, clearToken, openSocket, fileBlobUrl, downloadFile } from "./api.js";
 import { confirmDialog } from "./Dialog.jsx";
 import { Toaster, toast } from "sonner";
 import AdminPanel from "./AdminPanel.jsx";
@@ -253,11 +253,15 @@ function Chat({ onLogout, theme, onToggleTheme }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function connect() {
-    const ws = openSocket();
-    ws.onmessage = (ev) => handleEvent(JSON.parse(ev.data));
-    ws.onclose = () => { setBusy(false); };
-    wsRef.current = ws;
+  async function connect() {
+    try {
+      const ws = await openSocket();   // #4 — получает тикет, затем открывает сокет
+      ws.onmessage = (ev) => handleEvent(JSON.parse(ev.data));
+      ws.onclose = () => { setBusy(false); };
+      wsRef.current = ws;
+    } catch {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -673,6 +677,22 @@ function TypingDots() {
   );
 }
 
+function AuthImage({ id, name }) {
+  // #4 — картинка грузится через fetch с Authorization → blob (токена в URL нет)
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    let obj;
+    fileBlobUrl(id).then((u) => { obj = u; setUrl(u); }).catch(() => {});
+    return () => { if (obj) URL.revokeObjectURL(obj); };
+  }, [id]);
+  if (!url) return null;
+  return (
+    <a href={url} target="_blank" rel="noreferrer">
+      <img src={url} alt={name} />
+    </a>
+  );
+}
+
 function Message({ m, streaming }) {
   return (
     <div className={"msg " + m.role}>
@@ -698,11 +718,7 @@ function Message({ m, streaming }) {
         )}
         {m.images?.length > 0 && (
           <div className="images">
-            {m.images.map((img, i) => (
-              <a key={i} href={fileUrl(img.id)} target="_blank" rel="noreferrer">
-                <img src={fileUrl(img.id)} alt={img.name} />
-              </a>
-            ))}
+            {m.images.map((img, i) => <AuthImage key={i} id={img.id} name={img.name} />)}
           </div>
         )}
         {m.docs?.length > 0 && (
@@ -710,9 +726,10 @@ function Message({ m, streaming }) {
             {m.docs.map((d, i) => {
               const meta = docMeta(d.name);
               return (
-                <a key={i} className={"doc-link " + meta.cls} href={fileUrl(d.id)}>
+                <button key={i} className={"doc-link " + meta.cls}
+                        onClick={() => downloadFile(d.id, d.name).catch(() => {})}>
                   <i className={"ti " + meta.icon} /> {d.name}
-                </a>
+                </button>
               );
             })}
           </div>
