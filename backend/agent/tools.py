@@ -195,6 +195,33 @@ TOOLS = [
         },
     },
     {
+        "name": "analyze_spec",
+        "description": (
+            "Формирует отчёт анализа технического задания (ТЗ) в Word. Используй когда "
+            "пользователь загрузил ТЗ и просит его проанализировать. Сначала ВНИМАТЕЛЬНО "
+            "разбери текст ТЗ (он в контексте), выдели требования, риски, противоречия и "
+            "пробелы (чего не хватает), затем вызови analyze_spec со структурированными "
+            "findings — получишь оформленный отчёт. Ответ и findings — на русском."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Название/предмет ТЗ"},
+                "summary": {"type": "string", "description": "Краткое резюме: о чём ТЗ и общий вывод"},
+                "requirements": {"type": "array", "items": {"type": "string"},
+                                 "description": "Список выявленных требований"},
+                "risks": {"type": "array", "items": {"type": "string"},
+                          "description": "Риски и потенциальные проблемы"},
+                "contradictions": {"type": "array", "items": {"type": "string"},
+                                   "description": "Противоречия в ТЗ"},
+                "gaps": {"type": "array", "items": {"type": "string"},
+                         "description": "Пробелы — чего не хватает/что уточнить"},
+                "filename": {"type": "string", "description": "Имя файла без расширения"},
+            },
+            "required": ["summary"],
+        },
+    },
+    {
         "name": "create_estimate",
         "description": (
             "Создаёт смету/бюджет в Excel (.xlsx) с позициями, настоящими формулами "

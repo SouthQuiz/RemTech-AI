@@ -355,6 +355,14 @@ class Orchestrator:
                 items = params.get("items") or []
                 return f"КП «{base}» создано в {' и '.join(made)} ({len(items)} позиций) и отправлено пользователю."
 
+            if name == "analyze_spec":
+                d = await asyncio.to_thread(docgen.create_spec_report, params)
+                fname = (params.get("filename") or "Анализ_ТЗ") + ".docx"
+                await self._save_file(uid, cid, fname, d, "docx", emit, "document")
+                n = sum(len(params.get(k) or []) for k in
+                        ("requirements", "risks", "contradictions", "gaps"))
+                return f"Отчёт анализа ТЗ «{fname}» готов ({n} пунктов) и отправлен пользователю."
+
             if name == "create_estimate":
                 d = await asyncio.to_thread(docgen.create_estimate, params)
                 fname = (params.get("filename") or "Смета") + ".xlsx"

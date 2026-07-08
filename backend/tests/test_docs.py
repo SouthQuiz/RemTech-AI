@@ -71,6 +71,23 @@ def test_create_proposal_pdf():
     assert out[:5] == b"%PDF-" and len(out) > 1000
 
 
+def test_create_spec_report():
+    # issue #25 — отчёт анализа ТЗ
+    from docx import Document
+    data = {
+        "title": "ТЗ на портал заявок", "summary": "Веб-портал для приёма заявок клиентов.",
+        "requirements": ["Авторизация сотрудников", "Личный кабинет клиента"],
+        "risks": ["Не указаны сроки"], "contradictions": ["П.3 противоречит П.7"],
+        "gaps": ["Не указан объём нагрузки"],
+    }
+    out = docgen.create_spec_report(data)
+    d = Document(io.BytesIO(out))
+    text = "\n".join(p.text for p in d.paragraphs)
+    tables = " ".join(c.text for t in d.tables for r in t.rows for c in r.cells)
+    assert "АНАЛИЗ" in tables and "Требования" in tables
+    assert "Авторизация сотрудников" in text and "Не указаны сроки" in text
+
+
 def test_create_estimate():
     # issue #27 — Excel-смета с настоящими формулами
     from openpyxl import load_workbook
