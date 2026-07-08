@@ -57,6 +57,18 @@ def test_create_proposal():
     assert "11 032 000" in tables_text
     # итог: 11 032 000 + 2*150 000*1.12 = 11 368 000
     assert "11 368 000" in tables_text
+    # реквизиты компании присутствуют (issue #26)
+    assert "2447007401" in text  # ИНН «Ремтехники»
+
+
+def test_create_proposal_pdf():
+    # issue #28 — КП в PDF
+    data = {
+        "filename": "kp", "title": "Поставка спецтехники", "client": "ООО «Стройка»",
+        "markup_percent": 10, "items": [{"name": "Экскаватор", "qty": 1, "price": 1000000}],
+    }
+    out = docgen.create_proposal_pdf(data)
+    assert out[:5] == b"%PDF-" and len(out) > 1000
 
 
 def test_detect_kind():

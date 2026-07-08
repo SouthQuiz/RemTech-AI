@@ -341,11 +341,19 @@ class Orchestrator:
                 return f"PDF «{fname}» создан и отправлен пользователю."
 
             if name == "create_proposal":
-                data = await asyncio.to_thread(docgen.create_proposal, params)
-                fname = (params.get("filename") or "КП") + ".docx"
-                await self._save_file(uid, cid, fname, data, "docx", emit, "document")
+                base = params.get("filename") or "КП"
+                fmt = (params.get("format") or "docx").lower()   # docx | pdf | both (issue #28)
+                made = []
+                if fmt in ("docx", "both"):
+                    d = await asyncio.to_thread(docgen.create_proposal, params)
+                    await self._save_file(uid, cid, base + ".docx", d, "docx", emit, "document")
+                    made.append("Word")
+                if fmt in ("pdf", "both"):
+                    d = await asyncio.to_thread(docgen.create_proposal_pdf, params)
+                    await self._save_file(uid, cid, base + ".pdf", d, "pdf", emit, "document")
+                    made.append("PDF")
                 items = params.get("items") or []
-                return (f"КП «{fname}» создано ({len(items)} позиций) и отправлено пользователю.")
+                return f"КП «{base}» создано в {' и '.join(made)} ({len(items)} позиций) и отправлено пользователю."
 
             if name == "read_doc":
                 cur = await self.state.get_docx(cid)

@@ -349,8 +349,106 @@ def create_proposal(data: dict) -> bytes:
         p.add_run("Контакт: ").bold = True
         p.add_run(str(data["contact"]))
 
+    # ── Реквизиты компании (issue #26) ───────────────────────────────────────
+    from services.docx_style import requisites_lines
+    doc.add_paragraph()
+    for line in requisites_lines():
+        rp = doc.add_paragraph()
+        rr = rp.add_run(line)
+        rr.font.size = Pt(9)
+        rr.font.color.rgb = grey
+
     buf = io.BytesIO()
     doc.save(buf)
+    return buf.getvalue()
+
+
+def create_proposal_pdf(data: dict) -> bytes:
+    """Коммерческое предложение (КП) в фирменном стиле «Ремтехники» (PDF, issue #28).
+    Те же данные, что и create_proposal: {title, client, executor, contact,
+    validity_days, notes, markup_percent, items:[{name, qty, price}]}."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    from services.docx_style import COMPANY, requisites_lines
+
+    font = _register_pdf_font()
+    yellow = colors.HexColor("#FFCB05")
+    dark = colors.HexColor("#1A1A1A")
+    band = colors.HexColor("#FFF6D5")
+    grey = colors.HexColor("#7F7F7F")
+
+    body = ParagraphStyle("B", fontName=font, fontSize=11, leading=15, alignment=TA_LEFT)
+    small = ParagraphStyle("S", fontName=font, fontSize=8.5, leading=11, textColor=grey)
+    title = ParagraphStyle("T", fontName=font, fontSize=17, leading=21, textColor=dark)
+
+    buf = io.BytesIO()
+    pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2 * cm, rightMargin=1.5 * cm,
+                            topMargin=1.5 * cm, bottomMargin=1.5 * cm, title="КП")
+    flow = []
+
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Жёлтая титульная плашка
+    bar = Table([[Paragraph("<b>КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ</b>", title)]], colWidths=[17.5 * cm])
+    bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), yellow),
+                             ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                             ("LEFTPADDING", (0, 0), (-1, -1), 10)]))
+    flow.append(bar)
+    executor = data.get("executor") or COMPANY["name"]
+    flow.append(Paragraph(f"{esc(executor)} · {dt.datetime.now():%d.%m.%Y}", small))
+    flow.append(Spacer(1, 8))
+    if data.get("client"):
+        flow.append(Paragraph(f"<b>Кому:</b> {esc(data['client'])}", body))
+    if data.get("title"):
+        flow.append(Paragraph(f"<b>{esc(data['title'])}</b>", body))
+    flow.append(Spacer(1, 8))
+
+    # Таблица позиций
+    markup = float(data.get("markup_percent") or 0)
+    rows = [["№", "Наименование", "Кол-во", "Цена, ₽", "Сумма, ₽"]]
+    total = 0
+    for idx, it in enumerate(data.get("items") or [], 1):
+        qty = float(it.get("qty") or 1)
+        price = float(it.get("price") or 0)
+        summ = round(qty * price * (1 + markup / 100))
+        total += summ
+        rows.append([str(idx), Paragraph(esc(it.get("name", "")), body), _num(qty), _num(price), _num(summ)])
+    total_label = "ИТОГО" + (f" (с наценкой {markup:g}%)" if markup else "")
+    rows.append([total_label, "", "", "", _num(total) + " ₽"])
+
+    tbl = Table(rows, colWidths=[1 * cm, 8.5 * cm, 2 * cm, 3 * cm, 3 * cm])
+    style = [
+        ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), dark), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BFBFBF")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("SPAN", (0, -1), (3, -1)), ("BACKGROUND", (0, -1), (-1, -1), yellow),
+        ("FONTNAME", (0, -1), (-1, -1), font),
+    ]
+    for i in range(2, len(rows) - 1, 2):
+        style.append(("BACKGROUND", (0, i), (-1, i), band))
+    tbl.setStyle(TableStyle(style))
+    flow.append(tbl)
+    flow.append(Spacer(1, 10))
+
+    if data.get("validity_days"):
+        flow.append(Paragraph(f"Предложение действительно {int(data['validity_days'])} рабочих дней.", body))
+    if data.get("notes"):
+        flow.append(Paragraph(esc(data["notes"]), body))
+    if data.get("contact"):
+        flow.append(Paragraph(f"<b>Контакт:</b> {esc(data['contact'])}", body))
+    flow.append(Spacer(1, 14))
+    for line in requisites_lines():
+        flow.append(Paragraph(esc(line), small))
+
+    pdf.build(flow)
     return buf.getvalue()
 
 

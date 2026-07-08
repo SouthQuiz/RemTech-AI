@@ -150,6 +150,8 @@ TOOLS = [
                 "contact": {"type": "string", "description": "Контакт для связи"},
                 "validity_days": {"type": "integer", "description": "Срок действия (рабочих дней)", "default": 14},
                 "notes": {"type": "string", "description": "Примечания/условия"},
+                "format": {"type": "string", "enum": ["docx", "pdf", "both"],
+                           "description": "Формат КП: docx (по умолчанию), pdf или both", "default": "docx"},
             },
             "required": ["filename", "items"],
         },
