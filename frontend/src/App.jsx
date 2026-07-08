@@ -266,7 +266,7 @@ function Chat({ onLogout, theme, onToggleTheme }) {
 
   function handleEvent(ev) {
     setDraft((d) => {
-      const cur = d || { role: "assistant", text: "", status: "", images: [], docs: [] };
+      const cur = d || { role: "assistant", text: "", status: "", images: [], docs: [], sources: [] };
       switch (ev.type) {
         case "status":
         case "tool":
@@ -277,6 +277,8 @@ function Chat({ onLogout, theme, onToggleTheme }) {
           return { ...cur, images: [...cur.images, { id: ev.file_id, name: ev.name }] };
         case "document":
           return { ...cur, docs: [...cur.docs, { id: ev.file_id, name: ev.name }] };
+        case "sources":  // #29 — документы БЗ, на которые опирался ответ
+          return { ...cur, sources: ev.items || [] };
         case "error":
           return { ...cur, text: (cur.text ? cur.text + "\n\n" : "") + "⚠️ " + ev.text, status: "" };
         default:
@@ -291,7 +293,7 @@ function Chat({ onLogout, theme, onToggleTheme }) {
     if (ev.type === "done") {
       setBusy(false);
       setDraft((d) => {
-        const final = d || { role: "assistant", text: "", images: [], docs: [] };
+        const final = d || { role: "assistant", text: "", images: [], docs: [], sources: [] };
         setMessages((m) => [...m, { ...final, text: ev.text || final.text, status: "" }]);
         return null;
       });
@@ -713,6 +715,16 @@ function Message({ m, streaming }) {
                 </a>
               );
             })}
+          </div>
+        )}
+        {m.sources?.length > 0 && (
+          <div className="sources">
+            <div className="sources-head"><i className="ti ti-books" /> Источники из базы знаний</div>
+            {m.sources.map((s, i) => (
+              <span className="source-item" key={i}>
+                <i className="ti ti-file-text" /> {s.file_name}
+              </span>
+            ))}
           </div>
         )}
       </div>

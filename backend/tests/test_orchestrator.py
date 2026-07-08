@@ -117,9 +117,12 @@ async def test_search_knowledge_base_tool(session, monkeypatch):
     async def emit(e):
         pass
 
+    sources = []
     res = await orch.Orchestrator()._execute_tool(
-        "search_knowledge_base", {"query": "нужен экскаватор для земли"}, emit, 1, 1, None)
+        "search_knowledge_base", {"query": "нужен экскаватор для земли"}, emit, 1, 1, None, sources)
     assert "экскаватор" in res.lower()
+    # #29 — источник (документ) собран для ссылок в ответе
+    assert sources and sources[0]["file_name"] == "cat.txt" and "document_id" in sources[0]
     await engine.dispose()
 
 
