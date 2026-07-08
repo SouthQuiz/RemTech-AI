@@ -39,7 +39,7 @@ class _FakeClient:
     def __exit__(self, *a):
         return False
 
-    def stream(self, method, url):
+    def stream(self, method, url, **_):   # принимаем headers/extensions
         return self._resp
 
 
@@ -54,3 +54,18 @@ def test_redirect_to_internal_is_blocked(monkeypatch):
 def test_direct_internal_is_blocked():
     out = websearch.read_url("http://169.254.169.254/latest/meta-data/")
     assert "отклонена" in out.lower()
+
+
+def test_pinning_rejects_host_resolving_internal(monkeypatch):
+    # #8 — DNS-rebinding: хост резолвится во внутренний IP → отказ до подключения
+    import socket
+
+    def fake_getaddrinfo(host, port, *a, **kw):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", port or 80))]
+
+    # _is_safe_url пройдёт? нет — он тоже резолвит; подменяем на публичный там,
+    # а пиннинг внутри _fetch_html поймает внутренний адрес
+    monkeypatch.setattr(websearch.socket, "getaddrinfo", fake_getaddrinfo)
+    import pytest
+    with pytest.raises(websearch._UnsafeRedirect):
+        websearch._resolve_pinned_ip("evil.example", 80)

@@ -2,7 +2,17 @@
 Веб-поиск выполняется на стороне Anthropic (серверный инструмент web_search)."""
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
+
+
+def _ip_is_internal(ip: str) -> bool:
+    """True, если адрес ведёт во внутреннюю сеть (loopback/private/link-local/reserved/…)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True   # не смогли разобрать — считаем небезопасным
+    return bool(addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
@@ -22,13 +32,7 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
     except Exception:
         return False, "не удалось разрешить адрес хоста"
     for info in infos:
-        ip = info[4][0]
-        try:
-            addr = ipaddress.ip_address(ip)
-        except ValueError:
-            continue
-        if (addr.is_private or addr.is_loopback or addr.is_link_local
-                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+        if _ip_is_internal(info[4][0]):
             return False, "доступ к внутренним адресам запрещён"
     return True, ""
 
@@ -42,24 +46,53 @@ class _UnsafeRedirect(Exception):
     pass
 
 
+def _resolve_pinned_ip(host: str, port: int) -> str:
+    """Резолвит хост ОДИН раз и возвращает публичный IP для подключения (issue #8).
+    ВСЕ A/AAAA-записи обязаны быть публичными — иначе отказ. Подключаться будем
+    именно к этому IP, чтобы между проверкой и запросом не произошёл DNS-rebinding."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except Exception:
+        raise _UnsafeRedirect("не удалось разрешить адрес хоста")
+    ip = None
+    for info in infos:
+        cand = info[4][0]
+        if _ip_is_internal(cand):
+            raise _UnsafeRedirect("адрес хоста ведёт во внутреннюю сеть")
+        ip = ip or cand
+    if not ip:
+        raise _UnsafeRedirect("адрес хоста не разрешён")
+    return ip
+
+
 def _fetch_html(url: str) -> str:
-    """Загружает HTML вручную, ревалидируя адрес на КАЖДОМ хопе редиректа
-    (issue #8): trafilatura следовал редиректам без повторной проверки, что
-    позволяло увести запрос на внутренний адрес. Плюс таймаут и лимит размера."""
+    """Загружает HTML вручную с пиннингом IP и ревалидацией на каждом хопе редиректа
+    (issue #8). Хост резолвится один раз, подключение идёт к проверенному IP
+    (Host-заголовок сохраняется) — так httpx не перерезолвит хост на внутренний адрес.
+    Плюс таймаут и лимит размера."""
     import httpx
 
-    headers = {"User-Agent": "RemTechAI/1.0 (+internal)"}
-    with httpx.Client(follow_redirects=False, timeout=_TIMEOUT, headers=headers) as client:
+    ua = {"User-Agent": "RemTechAI/1.0 (+internal)"}
+    with httpx.Client(follow_redirects=False, timeout=_TIMEOUT, headers=ua) as client:
         for _ in range(_MAX_HOPS + 1):
-            ok, reason = _is_safe_url(url)
-            if not ok:
-                raise _UnsafeRedirect(reason)
-            with client.stream("GET", url) as r:
+            p = urlparse(url)
+            if p.scheme not in ("http", "https") or not p.hostname:
+                raise _UnsafeRedirect("недопустимая ссылка")
+            port = p.port or (443 if p.scheme == "https" else 80)
+            ip = _resolve_pinned_ip(p.hostname, port)   # резолв один раз + проверка
+
+            # URL с закреплённым IP; Host и SNI — исходный хост (TLS-сертификат валиден)
+            netloc = (f"[{ip}]" if ":" in ip else ip) + (f":{p.port}" if p.port else "")
+            ip_url = urlunparse((p.scheme, netloc, p.path or "/", p.params, p.query, ""))
+            headers = {"Host": p.netloc}
+            ext = {"sni_hostname": p.hostname} if p.scheme == "https" else {}
+
+            with client.stream("GET", ip_url, headers=headers, extensions=ext) as r:
                 if r.is_redirect:
                     loc = r.headers.get("location")
                     if not loc:
                         raise _UnsafeRedirect("редирект без адреса")
-                    url = str(r.url.join(loc))
+                    url = str(httpx.URL(url).join(loc))   # join против исходного (хостового) URL
                     continue
                 chunks, size = [], 0
                 for chunk in r.iter_bytes():
