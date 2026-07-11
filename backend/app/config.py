@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     embed_dim: int = 1024
     kb_top_k: int = 5
     kb_async_ingest: bool = False    # True → ингест через Celery-воркер (issue #22)
+
+    # ── Голос (EPIC-10, issue #32) — в вебе выключено; STT=Whisper, TTS=Silero (2b) ──
+    stt_enabled: bool = False
+    tts_enabled: bool = False
     # Лимит извлечения текста для ингеста БЗ: длинные договоры/КП не режем на 20k (аудит БЗ)
     kb_extract_max_chars: int = 200_000
 
