@@ -66,6 +66,27 @@ class Settings(BaseSettings):
     # Лимит извлечения текста для ингеста БЗ: длинные договоры/КП не режем на 20k (аудит БЗ)
     kb_extract_max_chars: int = 200_000
 
+    # ── Telegram-канал (EPIC-10, issue #31) — тонкий клиент API ──────────────────
+    # Секрет только из окружения (в коде/репозитории нет). Пустой токен → бот не стартует.
+    telegram_bot_token: str = ""
+    telegram_poll_timeout: int = 25       # long polling getUpdates timeout, сек
+    # Allow-list связывания: "<tg_id>:<username>,<tg_id>:<username>". Управляется
+    # администратором через окружение; сообщения от не-сопоставленных ID отклоняются.
+    telegram_allowlist: str = ""
+
+    @property
+    def telegram_allowmap(self) -> dict[int, str]:
+        out: dict[int, str] = {}
+        for pair in self.telegram_allowlist.split(","):
+            pair = pair.strip()
+            if not pair or ":" not in pair:
+                continue
+            tid, _, uname = pair.partition(":")
+            tid, uname = tid.strip(), uname.strip()
+            if tid.lstrip("-").isdigit() and uname:
+                out[int(tid)] = uname
+        return out
+
     # ── файлы / документы ──────────────────────────────────────────────────────
     files_dir: str = "data/files"
     pdf_font_path: str = ""
