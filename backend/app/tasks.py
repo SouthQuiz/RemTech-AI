@@ -33,6 +33,22 @@ def ingest_document_task(self, document_id: int, text: str) -> int:
         raise self.retry(exc=exc)
 
 
+@celery_app.task(name="tenders.poll")
+def tenders_poll_task() -> int:
+    """Issue #37 — периодический прогон подписок на тендеры: новые закупки →
+    веб-лента + Telegram, с дедупом по реестровому номеру."""
+    from app.database import SessionLocal
+    from services import tender_notify
+
+    async def _run() -> int:
+        async with SessionLocal() as s:
+            return await tender_notify.poll_once(s)
+
+    n = asyncio.run(_run())
+    log.info("tenders poll: %s новых уведомлений", n)
+    return n
+
+
 @celery_app.task(name="activity.purge")
 def purge_activity_log_task() -> int:
     """Issue #13 — периодическая очистка журнала по сроку хранения (retention)."""

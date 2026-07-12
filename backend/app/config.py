@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     # Allow-list связывания: "<tg_id>:<username>,<tg_id>:<username>". Управляется
     # администратором через окружение; сообщения от не-сопоставленных ID отклоняются.
     telegram_allowlist: str = ""
+    # Issue #37 — как часто Celery beat опрашивает подписки на тендеры (сек)
+    tender_poll_interval_seconds: int = 3600
 
     @property
     def telegram_allowmap(self) -> dict[int, str]:

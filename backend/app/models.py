@@ -160,3 +160,45 @@ class Agent(Base):
     allowed_roles: Mapped[str | None] = mapped_column(Text)
 
     model: Mapped["ModelConfig"] = relationship()
+
+
+# ── Issue #37 (TASK-0802) — уведомления о новых тендерах ──────────────────────
+class TenderSubscription(Base):
+    """Сохранённый критерий поиска закупок + получатели. Настраивает администратор."""
+    __tablename__ = "tender_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    keywords: Mapped[str] = mapped_column(Text)
+    region: Mapped[str | None] = mapped_column(String(200))
+    budget_min: Mapped[int | None] = mapped_column(Integer)
+    budget_max: Mapped[int | None] = mapped_column(Integer)
+    customer: Mapped[str | None] = mapped_column(String(200))
+    recipient_roles: Mapped[str] = mapped_column(Text, default="закупки")  # comma-sep
+    active: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[dt.datetime] = _now_col()
+
+
+class TenderSeen(Base):
+    """Реестр уже отправленных закупок (дедуп по реестровому номеру в рамках подписки)."""
+    __tablename__ = "tender_seen"
+    __table_args__ = (Index("ix_tender_seen_uniq", "subscription_id", "reg_number", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("tender_subscriptions.id"), index=True)
+    reg_number: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[dt.datetime] = _now_col()
+
+
+class Notification(Base):
+    """Веб-лента уведомлений; адресуется по роли получателя."""
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    recipient_role: Mapped[str] = mapped_column(String(20), index=True)
+    title: Mapped[str] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text)
+    link: Mapped[str | None] = mapped_column(Text)
+    read_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[dt.datetime] = _now_col()

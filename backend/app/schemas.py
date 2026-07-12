@@ -41,3 +41,13 @@ class AgentReq(BaseModel):
     tools: list[str] | None = None
     default_model: int | None = None
     allowed_roles: str | None = ""
+
+
+class TenderSubscriptionReq(BaseModel):
+    name: str
+    keywords: str
+    region: str | None = None
+    budget_min: int | None = None
+    budget_max: int | None = None
+    customer: str | None = None
+    recipient_roles: str = "закупки"

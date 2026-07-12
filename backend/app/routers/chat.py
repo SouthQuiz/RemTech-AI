@@ -24,6 +24,15 @@ async def api_conversations(user: dict = Depends(current_user),
     return [conv_dict(c) for c in await repo.list_conversations(db, user["user_id"])]
 
 
+@router.get("/api/notifications")
+async def api_notifications(user: dict = Depends(current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """Issue #37 — лента уведомлений о тендерах для роли пользователя (admin — все)."""
+    items = await repo.list_notifications(db, user.get("role", "user"))
+    return [{"id": n.id, "title": n.title, "body": n.body, "link": n.link,
+             "created_at": repo.iso(n.created_at)} for n in items]
+
+
 @router.post("/api/conversations")
 async def api_new_conversation(req: NewConversationReq, user: dict = Depends(current_user),
                                db: AsyncSession = Depends(get_db)):

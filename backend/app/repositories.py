@@ -6,6 +6,7 @@
 import datetime as dt
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models import (
     ActivityLog,
@@ -15,6 +16,9 @@ from app.models import (
     KBChunk,
     KBDocument,
     ModelConfig,
+    Notification,
+    TenderSeen,
+    TenderSubscription,
     UploadedFile,
     User,
 )
@@ -342,3 +346,61 @@ def _iso(value) -> str | None:
 
 # Публичный алиас (issue #18 — эндпоинты не должны обращаться к приватному _iso).
 iso = _iso
+
+
+# ── Issue #37 (TASK-0802) — подписки на тендеры, дедуп, уведомления ───────────
+async def create_subscription(s, name, keywords, region=None, budget_min=None,
+                              budget_max=None, customer=None,
+                              recipient_roles="закупки") -> TenderSubscription:
+    sub = TenderSubscription(
+        name=name, keywords=keywords, region=region, budget_min=budget_min,
+        budget_max=budget_max, customer=customer, recipient_roles=recipient_roles)
+    s.add(sub)
+    await s.flush()
+    return sub
+
+
+async def list_subscriptions(s, only_active=True) -> list[TenderSubscription]:
+    stmt = select(TenderSubscription)
+    if only_active:
+        stmt = stmt.where(TenderSubscription.active == 1)
+    return list((await s.execute(stmt.order_by(TenderSubscription.id))).scalars())
+
+
+async def delete_subscription(s, sub_id: int) -> None:
+    await s.execute(delete(TenderSeen).where(TenderSeen.subscription_id == sub_id))
+    await s.execute(delete(TenderSubscription).where(TenderSubscription.id == sub_id))
+
+
+async def mark_tender_seen(s, subscription_id: int, reg_number: str) -> bool:
+    """Атомарно фиксирует закупку как «виденную». True — если новая (вставлена),
+    False — если уже была (дедуп по (subscription_id, reg_number))."""
+    stmt = (pg_insert(TenderSeen)
+            .values(subscription_id=subscription_id, reg_number=reg_number)
+            .on_conflict_do_nothing(index_elements=["subscription_id", "reg_number"]))
+    res = await s.execute(stmt)
+    return res.rowcount > 0
+
+
+async def add_notification(s, recipient_role, title, body=None, link=None) -> Notification:
+    n = Notification(recipient_role=recipient_role, title=title, body=body, link=link)
+    s.add(n)
+    await s.flush()
+    return n
+
+
+async def list_notifications(s, role: str, limit: int = 50) -> list[Notification]:
+    """Лента уведомлений роли; admin видит все."""
+    stmt = select(Notification)
+    if role != "admin":
+        stmt = stmt.where(Notification.recipient_role == role)
+    stmt = stmt.order_by(Notification.id.desc()).limit(limit)
+    return list((await s.execute(stmt)).scalars())
+
+
+async def usernames_by_roles(s, roles: list[str]) -> list[str]:
+    """Активные пользователи с указанными ролями — для адресации уведомлений."""
+    if not roles:
+        return []
+    stmt = select(User.username).where(User.role.in_(roles), User.active == 1)
+    return list((await s.execute(stmt)).scalars())

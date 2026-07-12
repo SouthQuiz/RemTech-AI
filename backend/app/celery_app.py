@@ -28,5 +28,10 @@ celery_app.conf.update(
             "task": "activity.purge",
             "schedule": 24 * 60 * 60,   # раз в сутки
         },
+        # Issue #37 — опрос подписок на тендеры (новые закупки → веб + Telegram).
+        "poll-tenders": {
+            "task": "tenders.poll",
+            "schedule": settings.tender_poll_interval_seconds,
+        },
     },
 )

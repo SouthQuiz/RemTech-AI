@@ -8,7 +8,13 @@ from app import auth
 from app import repositories as repo
 from app.database import get_db
 from app.deps import admin_user, conv_dict
-from app.schemas import AdminCreateUserReq, AgentReq, ModelConfigReq, PasswordReq
+from app.schemas import (
+    AdminCreateUserReq,
+    AgentReq,
+    ModelConfigReq,
+    PasswordReq,
+    TenderSubscriptionReq,
+)
 from services import reports
 
 router = APIRouter(prefix="/api/admin")
@@ -214,3 +220,47 @@ async def api_admin_export_user_docx(uid: int, admin: dict = Depends(admin_user)
     await db.commit()
     return Response(content=data, media_type=_DOCX_MIME,
                     headers={"Content-Disposition": 'attachment; filename="user_chats.docx"'})
+
+
+# ── Issue #37 — подписки на тендеры и ручной прогон опроса ─────────────────────
+
+def _sub_dict(sub):
+    return {"id": sub.id, "name": sub.name, "keywords": sub.keywords,
+            "region": sub.region, "budget_min": sub.budget_min,
+            "budget_max": sub.budget_max, "customer": sub.customer,
+            "recipient_roles": sub.recipient_roles, "active": bool(sub.active)}
+
+
+@router.get("/tenders/subscriptions")
+async def api_list_subscriptions(admin: dict = Depends(admin_user),
+                                 db: AsyncSession = Depends(get_db)):
+    return [_sub_dict(s) for s in await repo.list_subscriptions(db, only_active=False)]
+
+
+@router.post("/tenders/subscriptions")
+async def api_create_subscription(req: TenderSubscriptionReq, admin: dict = Depends(admin_user),
+                                  db: AsyncSession = Depends(get_db)):
+    sub = await repo.create_subscription(
+        db, req.name, req.keywords, req.region, req.budget_min, req.budget_max,
+        req.customer, req.recipient_roles or "закупки")
+    await repo.log_activity(db, admin["user_id"], "tender_subscription",
+                            f"Создана подписка «{req.name}»")
+    await db.commit()
+    return _sub_dict(sub)
+
+
+@router.delete("/tenders/subscriptions/{sub_id}")
+async def api_delete_subscription(sub_id: int, admin: dict = Depends(admin_user),
+                                  db: AsyncSession = Depends(get_db)):
+    await repo.delete_subscription(db, sub_id)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/tenders/poll")
+async def api_run_tender_poll(admin: dict = Depends(admin_user),
+                              db: AsyncSession = Depends(get_db)):
+    """Ручной прогон опроса подписок (для проверки/по требованию; в проде — Celery beat)."""
+    from services import tender_notify
+    n = await tender_notify.poll_once(db)
+    return {"new_notifications": n}
