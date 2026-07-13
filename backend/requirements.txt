@@ -27,4 +27,6 @@ redis==5.2.1
 
 # Голосовой ввод (EPIC-10, issue #34) — локальный STT на CTranslate2, CPU/GPU.
 # Модель качается при первом запуске; голос не покидает контур (ADR-010/011).
-faster-whisper==1.0.3
+# av 18 — abi3-wheel (Python 3.13); faster-whisper 1.2 снял верхний пин на av.
+av==18.0.0
+faster-whisper==1.2.1
