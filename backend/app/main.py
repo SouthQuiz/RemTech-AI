@@ -57,3 +57,15 @@ app.add_middleware(
 
 for _router in (auth.router, chat.router, files.router, admin.router, kb.router, ws.router):
     app.include_router(_router)
+
+# Раздача собранного фронта тем же процессом (single-origin: /, /api, /ws на одном
+# домене — удобно для демо-туннеля и прод-развёртывания без отдельного веб-сервера).
+# Монтируется ПОСЛЕ роутеров, поэтому /api и /ws имеют приоритет. Включается только
+# если сборка есть (frontend/dist). html=True → SPA отдаёт index.html.
+import os as _os  # noqa: E402
+
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+if _os.path.isdir(_dist):
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")
