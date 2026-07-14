@@ -58,12 +58,14 @@ class Settings(BaseSettings):
     replicate_api_token: str = ""
 
     # ── RAG / эмбеддинги ───────────────────────────────────────────────────────
-    tei_url: str = ""                # реранкер (bge-reranker) на GPU — стадия 3b
+    tei_url: str = ""                # TEI-реранкер (bge-reranker) на GPU (#39); пусто → одностадийный поиск
     embed_backend: str = "ollama"    # ollama | fake (fake — для тестов/без GPU)
     ollama_url: str = "http://localhost:11434"
     embed_model: str = "bge-m3"
     embed_dim: int = 1024
     kb_top_k: int = 5
+    # #39 — двухстадийный поиск: косинус top-N кандидатов → реранк TEI → финальный top_k
+    kb_rerank_candidates: int = 20
     kb_async_ingest: bool = False    # True → ингест через Celery-воркер (issue #22)
 
     # ── Голос (EPIC-10, issue #32/#34) — в вебе выключено; STT=Whisper, TTS=Silero ──

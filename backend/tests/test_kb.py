@@ -51,3 +51,45 @@ async def test_document_listing_and_delete(session):
     await repo.delete_kb_document(session, r["document_id"])
     await session.commit()
     assert not await repo.list_kb_documents(session)
+
+
+# ── Issue #39 — двухстадийный поиск с реранкером (TEI) ────────────────────────
+
+async def test_search_rerank_changes_order(session, monkeypatch):
+    await kb.ingest_document(session, EMB, "a.txt", "Гусеничный экскаватор XCMG XE215C.")
+    await kb.ingest_document(session, EMB, "b.txt", "Фронтальный погрузчик XCMG LW300.")
+    await kb.ingest_document(session, EMB, "c.txt", "Дорожный каток XCMG XS143.")
+    await session.commit()
+
+    cosine = await kb.search(session, EMB, "экскаватор", k=3)   # одностадийно (TEI выкл)
+    assert len(cosine) == 3
+
+    monkeypatch.setattr(kb.reranker, "enabled", lambda: True)
+    async def fake_order(query, texts):                 # реранкер разворачивает порядок
+        return list(reversed(range(len(texts))))
+    monkeypatch.setattr(kb.reranker, "rerank_order", fake_order)
+
+    reranked = await kb.search(session, EMB, "экскаватор", k=3)
+    assert [r["file_name"] for r in reranked] == list(reversed([c["file_name"] for c in cosine]))
+
+
+async def test_search_rerank_unavailable_falls_back(session, monkeypatch):
+    await kb.ingest_document(session, EMB, "a.txt", "Гусеничный экскаватор для земляных работ.")
+    await kb.ingest_document(session, EMB, "b.txt", "Погрузчик для склада.")
+    await session.commit()
+
+    monkeypatch.setattr(kb.reranker, "enabled", lambda: True)
+    async def unavailable(query, texts):                # TEI недоступен → None
+        return None
+    monkeypatch.setattr(kb.reranker, "rerank_order", unavailable)
+
+    res = await kb.search(session, EMB, "экскаватор", k=2)
+    assert res and "экскаватор" in res[0]["text"].lower()   # не упал, косинусный результат
+
+
+async def test_reranker_disabled_and_none(monkeypatch):
+    from services import reranker
+    monkeypatch.setattr(reranker.settings, "tei_url", "")
+    assert reranker.enabled() is False
+    assert await reranker.rerank_order("вопрос", ["a", "b"]) is None
+    assert await reranker.rerank_order("вопрос", []) is None

@@ -6,6 +6,7 @@
 """
 from app import repositories as repo
 from app.config import get_settings
+from services import reranker
 
 settings = get_settings()
 
@@ -58,8 +59,21 @@ async def ingest_document(session, embedder, file_name: str, text: str,
 
 async def search(session, embedder, query: str, roles: list[str] | None = None,
                  k: int | None = None) -> list[dict]:
-    """Ищет релевантные чанки по вопросу с фильтром по ролям."""
+    """Ищет релевантные чанки по вопросу с фильтром по ролям.
+
+    #39 — двухстадийно, если включён TEI-реранкер: pgvector даёт top-N кандидатов по
+    косинусу → bge-reranker переоценивает → финальный top_k. Без TEI (или при его
+    недоступности) — одностадийный косинусный путь (обратная совместимость)."""
     if not (query or "").strip():
         return []
+    k = k or settings.kb_top_k
     q_emb = await embedder.embed(query)
-    return await repo.search_chunks(session, q_emb, roles=roles, k=k or settings.kb_top_k)
+    if not reranker.enabled():
+        return await repo.search_chunks(session, q_emb, roles=roles, k=k)
+    # первая стадия: больше кандидатов для реранка
+    n = max(k, settings.kb_rerank_candidates)
+    hits = await repo.search_chunks(session, q_emb, roles=roles, k=n)
+    order = await reranker.rerank_order(query, [h["text"] for h in hits])
+    if order is None:               # TEI недоступен/ошибка — откат на косинус
+        return hits[:k]
+    return [hits[i] for i in order][:k]
