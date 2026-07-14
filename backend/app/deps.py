@@ -30,13 +30,16 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 async def _user_from_token(token: str, db: AsyncSession) -> dict | None:
-    """Issue #4 — проверка токена со сверкой active/роли по БД, чтобы деактивация
-    и смена роли действовали немедленно, а не до истечения JWT."""
+    """Issue #4 — проверка токена со сверкой active/роли/версии по БД, чтобы
+    деактивация, смена роли и отзыв (logout/смена пароля) действовали немедленно,
+    а не до истечения JWT."""
     claims = auth.verify(token or "")
     if not claims:
         return None
     u = await repo.get_user(db, claims["user_id"])
     if not u or not u.active:
+        return None
+    if claims.get("tv", 0) != (u.token_version or 0):   # токен отозван — версия сдвинута
         return None
     return {"user_id": u.id, "username": u.username,
             "name": u.full_name or u.username, "role": u.role}

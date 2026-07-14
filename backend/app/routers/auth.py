@@ -72,6 +72,16 @@ async def api_me(user: dict = Depends(current_user)):
     return user
 
 
+@router.post("/api/logout")
+async def api_logout(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Issue #4 — серверный выход: отзываем все токены пользователя (сдвиг версии),
+    так что даже перехваченный токен перестаёт действовать сразу, а не до истечения."""
+    await repo.revoke_tokens(db, user["user_id"])
+    await repo.log_activity(db, user["user_id"], "logout", "Выход из системы")
+    await db.commit()
+    return {"ok": True}
+
+
 @router.post("/api/ticket")
 async def api_ticket(user: dict = Depends(current_user)):
     """Issue #4 — одноразовый короткоживущий тикет для WebSocket (вместо JWT в URL)."""

@@ -40,6 +40,9 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default="user", server_default="user")
     active: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # Issue #4 — версия токена для отзыва: инкремент инвалидирует все ранее выданные
+    # JWT пользователя (logout на сервере, смена/сброс пароля, форс-разлогин).
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[dt.datetime] = _now_col()
 
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")

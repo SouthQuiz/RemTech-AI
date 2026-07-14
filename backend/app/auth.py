@@ -43,6 +43,7 @@ def make_token(user) -> str:
         "username": user.username,
         "name": user.full_name or user.username,
         "role": user.role,
+        "tv": int(getattr(user, "token_version", 0) or 0),   # issue #4 — версия для отзыва
         "exp": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=settings.jwt_ttl_hours),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGO)
@@ -52,7 +53,8 @@ def verify(token: str) -> dict | None:
     try:
         p = jwt.decode(token, settings.jwt_secret, algorithms=[ALGO])
         return {"user_id": int(p["sub"]), "username": p.get("username", ""),
-                "name": p.get("name", ""), "role": p.get("role", "user")}
+                "name": p.get("name", ""), "role": p.get("role", "user"),
+                "tv": int(p.get("tv", 0))}
     except Exception:
         return None
 

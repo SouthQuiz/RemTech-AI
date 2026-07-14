@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, getToken, clearToken, openSocket, fileBlobUrl, downloadFile } from "./api.js";
+import { api, getToken, logout, openSocket, fileBlobUrl, downloadFile } from "./api.js";
 import { confirmDialog } from "./Dialog.jsx";
 import { Toaster, toast } from "sonner";
 import AdminPanel from "./AdminPanel.jsx";
@@ -72,7 +72,7 @@ export default function App() {
         <Login onLogin={() => setAuthed(true)} theme={theme} onToggleTheme={toggle} />
       ) : (
         <Chat
-          onLogout={() => { clearToken(); setAuthed(false); }}
+          onLogout={async () => { await logout(); setAuthed(false); }}
           theme={theme}
           onToggleTheme={toggle}
         />

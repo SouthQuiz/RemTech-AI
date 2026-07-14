@@ -60,8 +60,18 @@ async def set_user_active(s, user_id: int, active: bool) -> None:
 
 
 async def update_password(s, user_id: int, password_hash: str) -> None:
+    # issue #4 — смена/сброс пароля отзывает все прежние токены (сдвиг версии)
     await s.execute(
-        update(User).where(User.id == user_id).values(password_hash=password_hash)
+        update(User).where(User.id == user_id)
+        .values(password_hash=password_hash, token_version=User.token_version + 1)
+    )
+
+
+async def revoke_tokens(s, user_id: int) -> None:
+    """Issue #4 — отзыв всех токенов пользователя (logout на сервере, форс-разлогин)."""
+    await s.execute(
+        update(User).where(User.id == user_id)
+        .values(token_version=User.token_version + 1)
     )
 
 

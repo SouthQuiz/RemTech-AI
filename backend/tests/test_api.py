@@ -249,3 +249,49 @@ async def test_kb_admin_endpoints(client):
         assert (await client.get("/api/admin/kb", headers=_auth(admin))).json() == []
     finally:
         app.dependency_overrides.pop(embedder_dep, None)
+
+
+# ── Issue #4 — отзыв токенов (logout, смена пароля, форс-разлогин) ─────────────
+
+async def test_logout_revokes_token(client):
+    token = await _register_admin(client)
+    assert (await client.get("/api/me", headers=_auth(token))).status_code == 200
+    assert (await client.post("/api/logout", headers=_auth(token))).status_code == 200
+    # тот же токен после серверного logout больше не действует
+    assert (await client.get("/api/me", headers=_auth(token))).status_code == 401
+
+
+async def test_password_reset_revokes_old_token(client):
+    admin = await _register_admin(client)
+    uid = (await client.post("/api/admin/users", headers=_auth(admin),
+           json={"username": "ivan", "password": "pass1234", "role": "user"})).json()["id"]
+    utoken = (await client.post("/api/login",
+              json={"username": "ivan", "password": "pass1234"})).json()["token"]
+    assert (await client.get("/api/me", headers=_auth(utoken))).status_code == 200
+    # админ сбрасывает пароль → прежний токен сотрудника отозван
+    assert (await client.post(f"/api/admin/users/{uid}/password", headers=_auth(admin),
+            json={"password": "newpass12"})).status_code == 200
+    assert (await client.get("/api/me", headers=_auth(utoken))).status_code == 401
+
+
+async def test_admin_force_logout_revokes_token(client):
+    admin = await _register_admin(client)
+    uid = (await client.post("/api/admin/users", headers=_auth(admin),
+           json={"username": "petr", "password": "pass1234", "role": "user"})).json()["id"]
+    utoken = (await client.post("/api/login",
+              json={"username": "petr", "password": "pass1234"})).json()["token"]
+    assert (await client.get("/api/me", headers=_auth(utoken))).status_code == 200
+    assert (await client.post(f"/api/admin/users/{uid}/logout",
+            headers=_auth(admin))).status_code == 200
+    assert (await client.get("/api/me", headers=_auth(utoken))).status_code == 401
+
+
+async def test_deactivation_revokes_token(client):
+    admin = await _register_admin(client)
+    uid = (await client.post("/api/admin/users", headers=_auth(admin),
+           json={"username": "sveta", "password": "pass1234", "role": "user"})).json()["id"]
+    utoken = (await client.post("/api/login",
+              json={"username": "sveta", "password": "pass1234"})).json()["token"]
+    assert (await client.post(f"/api/admin/users/{uid}/active?active=false",
+            headers=_auth(admin))).status_code == 200
+    assert (await client.get("/api/me", headers=_auth(utoken))).status_code == 401

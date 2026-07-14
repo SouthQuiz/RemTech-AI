@@ -7,6 +7,19 @@ export function clearToken() {
   localStorage.removeItem("token");
 }
 
+// #4 — серверный выход: отзываем токен на бэкенде (best-effort), затем чистим локально.
+export async function logout() {
+  try {
+    await fetch("/api/logout", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+  } catch {
+    /* сеть недоступна — всё равно выходим локально */
+  }
+  clearToken();
+}
+
 // Единый multipart-аплоад (issue #19 — было два почти идентичных дубля).
 async function uploadForm(path, file, fields = {}) {
   const fd = new FormData();

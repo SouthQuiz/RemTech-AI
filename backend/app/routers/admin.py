@@ -86,8 +86,23 @@ async def api_admin_set_active(uid: int, active: bool, admin: dict = Depends(adm
     if uid == admin["user_id"]:
         raise HTTPException(400, "Нельзя деактивировать самого себя")
     await repo.set_user_active(db, uid, active)
+    if not active:
+        await repo.revoke_tokens(db, uid)   # issue #4 — деактивация сразу гасит токены
     await repo.log_activity(db, admin["user_id"], "set_active",
                             f"{'Активирован' if active else 'Деактивирован'} аккаунт (id {uid})")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/users/{uid}/logout")
+async def api_admin_force_logout(uid: int, admin: dict = Depends(admin_user),
+                                 db: AsyncSession = Depends(get_db)):
+    """Issue #4 — форс-разлогин: отзываем все токены пользователя (напр. при
+    компрометации сессии), без деактивации и смены пароля."""
+    if not await repo.get_user(db, uid):
+        raise HTTPException(404, "Сотрудник не найден")
+    await repo.revoke_tokens(db, uid)
+    await repo.log_activity(db, admin["user_id"], "force_logout", f"Отзыв сессий (id {uid})")
     await db.commit()
     return {"ok": True}
 
