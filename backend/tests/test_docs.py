@@ -129,6 +129,49 @@ def test_fill_template():
     assert remaining == ["НЕ_ЗАПОЛНЕНО"]
 
 
+def _tiny_png(path):
+    """Валидный маленький PNG (для проверки вставки логотипа, issue #26)."""
+    from PIL import Image
+    Image.new("RGB", (16, 16), (255, 203, 5)).save(str(path), "PNG")
+    return str(path)
+
+
+def test_logo_file_accepts_png_rejects_svg_and_empty(tmp_path, monkeypatch):
+    # issue #26 — logo_file() отдаёт PNG из LOGO_PATH и отклоняет SVG/пустое
+    from app.config import get_settings
+    from services.docx_style import logo_file
+    s = get_settings()
+    png = _tiny_png(tmp_path / "logo.png")
+    monkeypatch.setattr(s, "logo_path", png)
+    assert logo_file() == png
+    monkeypatch.setattr(s, "logo_path", str(tmp_path / "logo.svg"))  # SVG не годится
+    assert logo_file() == ""
+    monkeypatch.setattr(s, "logo_path", "")
+    assert logo_file() == ""
+
+
+def test_proposal_embeds_logo_when_configured(tmp_path, monkeypatch):
+    # issue #26 — при заданном LOGO_PATH логотип встраивается в КП картинкой
+    from docx import Document
+
+    import services.docx_style as ds
+    png = _tiny_png(tmp_path / "logo.png")
+    monkeypatch.setattr(ds, "logo_file", lambda: png)
+    out = docgen.create_proposal({"filename": "kp", "items": [{"name": "X", "price": 100}]})
+    doc = Document(io.BytesIO(out))
+    assert len(doc.inline_shapes) >= 1   # логотип присутствует как встроенная картинка
+
+
+def test_proposal_no_logo_without_config(monkeypatch):
+    # без LOGO_PATH — КП генерируется как раньше, без картинок (мягкий пропуск)
+    from docx import Document
+
+    import services.docx_style as ds
+    monkeypatch.setattr(ds, "logo_file", lambda: "")
+    out = docgen.create_proposal({"filename": "kp", "items": [{"name": "X", "price": 100}]})
+    assert len(Document(io.BytesIO(out)).inline_shapes) == 0
+
+
 def test_detect_kind():
     assert detect_kind("a.docx") == "docx"
     assert detect_kind("b.PDF") == "pdf"
