@@ -130,8 +130,12 @@ class SileroSynthesizer(Synthesizer):
     def _run(self, text: str) -> bytes:
         model = self._load()
         audio = model.apply_tts(text=text, speaker=self._speaker, sample_rate=self._sample_rate)
-        # torch.FloatTensor [-1,1] → int16 PCM → WAV (без numpy)
-        ints = [max(-32768, min(32767, int(x * 32767))) for x in audio.tolist()]
+        # нормализуем громкость к пику 0.97 — тихий сигнал через Opus звучит хрипло
+        peak = float(audio.abs().max())
+        if peak > 1e-4:
+            audio = audio * (0.97 / peak)
+        # torch.FloatTensor [-1,1] → int16 PCM (с округлением) → WAV (без numpy)
+        ints = [max(-32768, min(32767, int(round(x * 32767)))) for x in audio.tolist()]
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
             w.setnchannels(1)
@@ -164,6 +168,7 @@ def wav_to_ogg_opus(wav: bytes) -> bytes | None:
         container = av.open(out, mode="w", format="ogg")
         stream = container.add_stream("libopus", rate=48000)
         stream.layout = "mono"
+        stream.bit_rate = 96000   # выше дефолта — чище синтезированная речь (#40)
         resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
         src = av.AudioFrame(format="s16", layout="mono", samples=nframes)
         src.sample_rate = rate
