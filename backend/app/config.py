@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     stt_language: str = "ru"          # язык распознавания (пусто → автоопределение)
     stt_device: str = "cpu"           # cpu | cuda
     stt_compute_type: str = "int8"    # int8 (CPU) | float16 (GPU)
+    # Issue #40 — локальный TTS (Silero). backend: silence (заглушка) | silero.
+    tts_backend: str = "silence"
+    tts_model: str = "v4_ru"          # пакет голосов Silero (ru)
+    tts_speaker: str = "xenia"        # голос: aidar|baya|kseniya|xenia|eugene (ru)
+    tts_sample_rate: int = 48000      # 8000|24000|48000 (48000 — под opus/sendVoice)
+    tts_device: str = "cpu"           # cpu | cuda
     # Лимит извлечения текста для ингеста БЗ: длинные договоры/КП не режем на 20k (аудит БЗ)
     kb_extract_max_chars: int = 200_000
 

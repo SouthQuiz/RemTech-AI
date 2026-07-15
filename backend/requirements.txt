@@ -30,3 +30,7 @@ redis==5.2.1
 # av 18 — abi3-wheel (Python 3.13); faster-whisper 1.2 снял верхний пин на av.
 av==18.0.0
 faster-whisper==1.2.1
+
+# Голосовые ответы (EPIC-10, issue #40) — локальный TTS Silero через torch.hub.
+# CPU-версия torch; модель качается при первом синтезе; голос не покидает контур.
+torch>=2.6

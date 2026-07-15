@@ -36,3 +36,46 @@ async def test_hooks_disabled_by_default(monkeypatch):
     monkeypatch.setattr(media.settings, "tts_enabled", False)
     assert await maybe_transcribe(b"audio", "audio/wav") == ""
     assert await maybe_synthesize("текст") is None
+
+
+# ── Issue #40 — TTS (Silero) ─────────────────────────────────────────────────
+
+def test_get_synthesizer_selection(monkeypatch):
+    monkeypatch.setattr(media, "_synthesizer", None)
+    monkeypatch.setattr(media.settings, "tts_backend", "silence")
+    assert isinstance(media.get_synthesizer(), media.SilenceSynthesizer)
+
+    monkeypatch.setattr(media, "_synthesizer", None)
+    monkeypatch.setattr(media.settings, "tts_backend", "silero")
+    s = media.get_synthesizer()
+    assert isinstance(s, media.SileroSynthesizer) and s._model is None   # модель ещё не загружена
+
+
+async def test_tts_disabled_by_default(monkeypatch):
+    monkeypatch.setattr(media.settings, "tts_enabled", False)
+    assert await media.maybe_synthesize("любой текст") is None
+
+
+async def test_maybe_synthesize_swallows_error(monkeypatch):
+    monkeypatch.setattr(media.settings, "tts_enabled", True)
+
+    class _Boom(media.Synthesizer):
+        async def synthesize(self, text):
+            raise media.SynthesisError("сбой модели")
+    monkeypatch.setattr(media, "_synthesizer", _Boom())
+    # ошибка синтеза не роняет ход — откат на текст (None)
+    assert await media.maybe_synthesize("текст") is None
+
+
+async def test_wav_to_ogg_opus_valid():
+    wav = await media.SilenceSynthesizer().synthesize("проверка")
+    ogg = media.wav_to_ogg_opus(wav)
+    assert ogg and ogg[:4] == b"OggS"     # валидный OGG-контейнер для sendVoice
+
+
+async def test_silero_roundtrip_if_available():
+    import pytest
+    pytest.importorskip("torch")
+    s = media.SileroSynthesizer("v4_ru", "xenia", 48000, "cpu")
+    audio = await s.synthesize("Привет, это тест озвучки.")
+    assert audio[:4] == b"RIFF" and len(audio) > 44   # валидный WAV с данными
