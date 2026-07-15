@@ -136,18 +136,32 @@ def _tiny_png(path):
     return str(path)
 
 
-def test_logo_file_accepts_png_rejects_svg_and_empty(tmp_path, monkeypatch):
-    # issue #26 — logo_file() отдаёт PNG из LOGO_PATH и отклоняет SVG/пустое
+def test_logo_file_override_default_and_svg(tmp_path, monkeypatch):
+    # issue #26 — LOGO_PATH переопределяет дефолт; SVG отклоняется; пусто → bundled
+    import os
+
     from app.config import get_settings
-    from services.docx_style import logo_file
+    from services.docx_style import BUNDLED_LOGO, logo_file
     s = get_settings()
     png = _tiny_png(tmp_path / "logo.png")
     monkeypatch.setattr(s, "logo_path", png)
-    assert logo_file() == png
+    assert logo_file() == png                                       # override PNG
     monkeypatch.setattr(s, "logo_path", str(tmp_path / "logo.svg"))  # SVG не годится
     assert logo_file() == ""
-    monkeypatch.setattr(s, "logo_path", "")
-    assert logo_file() == ""
+    monkeypatch.setattr(s, "logo_path", "")                          # пусто → поставляемый
+    assert logo_file() == (BUNDLED_LOGO if os.path.isfile(BUNDLED_LOGO) else "")
+
+
+def test_bundled_logo_exists_and_embeds():
+    # issue #26 — поставляемый логотип на месте и реально встраивается в КП по умолчанию
+    import os
+
+    from docx import Document
+
+    from services.docx_style import BUNDLED_LOGO
+    assert os.path.isfile(BUNDLED_LOGO), "assets/logo.png отсутствует"
+    out = docgen.create_proposal({"filename": "kp", "items": [{"name": "X", "price": 100}]})
+    assert len(Document(io.BytesIO(out)).inline_shapes) >= 1
 
 
 def test_proposal_embeds_logo_when_configured(tmp_path, monkeypatch):
