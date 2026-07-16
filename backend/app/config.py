@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     # Секрет только из окружения (в коде/репозитории нет). Пустой токен → бот не стартует.
     telegram_bot_token: str = ""
     telegram_poll_timeout: int = 25       # long polling getUpdates timeout, сек
+    # Персона Telegram-бота: имя агента, под которым он ведёт ход (личный ассистент
+    # директора). Пусто → дефолтный агент (как в вебе). Web — для сотрудников,
+    # Telegram — личный ассистент гендиректора с базой знаний о компании.
+    telegram_agent: str = ""
     # Allow-list связывания: "<tg_id>:<username>,<tg_id>:<username>". Управляется
     # администратором через окружение; сообщения от не-сопоставленных ID отклоняются.
     telegram_allowlist: str = ""

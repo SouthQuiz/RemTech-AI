@@ -109,14 +109,33 @@ class TelegramTransport:
 
 
 class TelegramBot:
-    def __init__(self, transport, allowmap: dict[int, str], poll_timeout: int = 25):
+    def __init__(self, transport, allowmap: dict[int, str], poll_timeout: int = 25,
+                 agent_name: str = ""):
         self.tx = transport
         self.allowmap = allowmap
         self.poll_timeout = poll_timeout
+        self._agent_name = (agent_name or "").strip()   # персона бота (имя агента)
+        self._agent_id: int | None = None                # резолвится лениво по имени
+        self._agent_resolved = False
         self._conv: dict[int, int] = {}          # chat_id → conversation_id (продолжение диалога)
         self._pending_conv: dict[int, int] = {}  # chat_id → cid, ждущий подтверждения (#30)
         self._offset: int | None = None
         self._stop = False
+
+    async def agent_id(self) -> int | None:
+        """id агента-персоны по имени из конфига (кэш). Нет имени/агента → None
+        (дефолтный агент). Личный ассистент директора для Telegram (web — сотрудники)."""
+        if self._agent_resolved or not self._agent_name:
+            return self._agent_id
+        async with SessionLocal() as s:
+            for a in await repo.list_agents(s):
+                if a.name == self._agent_name:
+                    self._agent_id = a.id
+                    break
+            else:
+                log.warning("telegram_agent «%s» не найден — дефолтный агент", self._agent_name)
+        self._agent_resolved = True
+        return self._agent_id
 
     # ── авторизация канала (allow-list) ──────────────────────────────────────
     async def resolve_user(self, tg_id: int) -> dict | None:
@@ -213,8 +232,8 @@ class TelegramBot:
                 collected.append("⚠️ " + event.get("text", "Ошибка"))
 
         try:
-            cid = await run_turn(user, self._conv.get(chat_id), text, [], None, emit,
-                                 audio=audio, audio_mime="audio/ogg")
+            cid = await run_turn(user, self._conv.get(chat_id), text, [], await self.agent_id(),
+                                 emit, audio=audio, audio_mime="audio/ogg")
             self._conv[chat_id] = cid
         except Exception:
             log.exception("telegram turn failed chat=%s", chat_id)
@@ -295,6 +314,7 @@ def build_bot() -> TelegramBot:
         TelegramTransport(s.telegram_bot_token),
         s.telegram_allowmap,
         s.telegram_poll_timeout,
+        s.telegram_agent,
     )
 
 

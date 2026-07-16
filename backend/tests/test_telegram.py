@@ -187,3 +187,30 @@ def test_bot_has_no_voice_reply():
     # TTS в Telegram убран — ни озвучки ответа, ни транспортной отправки медиа
     assert not hasattr(TelegramBot, "_send_voice_answer")
     assert not hasattr(tb.TelegramTransport, "send_media")
+
+
+# ── Персона бота: Telegram = личный ассистент директора (web — сотрудники) ─────
+
+async def test_bot_default_agent_when_unset():
+    # без TELEGRAM_AGENT — дефолтный агент (None), БД не трогается
+    bot = TelegramBot(FakeTransport(), allowmap={})
+    assert await bot.agent_id() is None
+
+
+async def test_bot_resolves_persona_agent(session, monkeypatch):
+    _bind_test_db(monkeypatch)
+    from app import repositories as repo
+    name = "Персона-Тест"
+    async with tb.SessionLocal() as s:   # тот же тестовый БД-маркер, что у бота
+        await repo.create_agent(s, name, "промпт", None, None, "")
+        await s.commit()
+    bot = TelegramBot(FakeTransport(), allowmap={}, agent_name=name)
+    aid = await bot.agent_id()
+    assert aid is not None
+    assert await bot.agent_id() == aid            # результат кэшируется
+
+
+async def test_bot_missing_persona_falls_back(session, monkeypatch):
+    _bind_test_db(monkeypatch)
+    bot = TelegramBot(FakeTransport(), allowmap={}, agent_name="Нет-Такого-Агента")
+    assert await bot.agent_id() is None            # не найден → дефолтный агент
