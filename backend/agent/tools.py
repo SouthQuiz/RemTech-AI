@@ -369,4 +369,24 @@ TOOLS = [
             "required": ["reminder_id"],
         },
     },
+    {
+        "name": "read_email",
+        "description": (
+            "Читает последние письма из почты (Gmail или Яндекс) и даёт краткую сводку: "
+            "от кого, тема, дата, фрагмент текста. Используй, когда просят проверить почту, "
+            "спрашивают «что нового на почте» или просят прочитать письма. Только чтение."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "enum": ["gmail", "yandex"],
+                           "description": "Какой ящик читать"},
+                "count": {"type": "integer",
+                          "description": "Сколько последних писем (по умолчанию 10)", "default": 10},
+                "unread_only": {"type": "boolean",
+                                "description": "Только непрочитанные", "default": False},
+            },
+            "required": ["source"],
+        },
+    },
 ]

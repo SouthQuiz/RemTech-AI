@@ -118,6 +118,14 @@ class Settings(BaseSettings):
                 out[int(tid)] = uname
         return out
 
+    # ── Почта (IMAP) — чтение писем личным ассистентом ──────────────────────────
+    # Логин = адрес, пароль = ПАРОЛЬ ПРИЛОЖЕНИЯ (не основной; Google/Яндекс ID → пароли
+    # приложений). Пусто → источник «не настроен», инструмент отвечает честно.
+    gmail_imap_user: str = ""
+    gmail_imap_password: str = ""
+    yandex_imap_user: str = ""
+    yandex_imap_password: str = ""
+
     # ── файлы / документы ──────────────────────────────────────────────────────
     files_dir: str = "data/files"
     pdf_font_path: str = ""

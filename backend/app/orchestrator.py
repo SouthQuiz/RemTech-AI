@@ -18,7 +18,7 @@ from app.database import SessionLocal
 from app.llm import gateway, resolve_route
 from app.logging_config import get_logger
 from app.state import make_state_store
-from services import docgen, replicate_svc, websearch
+from services import docgen, mail_svc, replicate_svc, websearch
 
 Emit = Callable[[dict], Awaitable[None]]
 settings = get_settings()
@@ -348,6 +348,7 @@ class Orchestrator:
             "set_reminder": self._t_set_reminder,
             "list_reminders": self._t_list_reminders,
             "cancel_reminder": self._t_cancel_reminder,
+            "read_email": self._t_read_email,
         }
 
     async def _execute_tool(self, name, params, emit, uid, cid, roles=None, sources=None):
@@ -562,6 +563,20 @@ class Orchestrator:
             ok = await repo.delete_reminder(s, int(rid), uid) if rid is not None else False
             await s.commit()
         return f"Напоминание #{rid} отменено." if ok else "Такое напоминание не найдено."
+
+    async def _t_read_email(self, params, emit, uid, cid, roles, sources):
+        src = (params.get("source") or "").strip().lower()
+        unread = bool(params.get("unread_only"))
+        try:
+            mails = await asyncio.to_thread(
+                mail_svc.fetch_recent, src, params.get("count", 10), unread)
+        except mail_svc.MailError as e:
+            return f"Почта недоступна: {e}"
+        if not mails:
+            return f"Новых писем в «{src}» нет." if unread else f"Писем в «{src}» нет."
+        lines = [f"• {m['from']} — {m['subject']} ({m['date'][:22]})\n  {m['snippet']}"
+                 for m in mails]
+        return f"Последние письма ({src}), {len(mails)} шт:\n" + "\n".join(lines)
 
     async def _t_read_doc(self, params, emit, uid, cid, roles, sources):
         cur = await self.state.get_docx(cid)
