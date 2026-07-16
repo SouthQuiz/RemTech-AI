@@ -50,7 +50,7 @@ def test_create_proposal():
     text = "\n".join(p.text for p in Document(io.BytesIO(out)).paragraphs)
     tables_text = " ".join(
         c.text for t in Document(io.BytesIO(out)).tables for row in t.rows for c in row.cells)
-    assert "КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ" in tables_text
+    assert "Коммерческое предложение" in text   # заголовок-абзац (не плашка)
     assert "Стройка" in text
     assert "Экскаватор XCMG XE215C" in tables_text
     # экскаватор с наценкой 12%: 9 850 000 * 1.12 = 11 032 000

@@ -266,48 +266,76 @@ def create_proposal(data: dict) -> bytes:
     с наценкой markup_percent.
     """
     from docx import Document
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
     from docx.shared import Cm, Pt, RGBColor
 
     from services.docx_style import (  # общий стиль (issue #19)
         BAND,
-        DARK,
-        LOGO_WIDTH_CM,
+        HAIRLINE,
+        INK,
+        SOFT,
         YELLOW,
         logo_file,
+        requisites_lines,
         shade,
     )
 
-    ink = RGBColor(0x1A, 0x1A, 0x1A)
-    grey = RGBColor(0x7F, 0x7F, 0x7F)
+    ink = RGBColor(0x2B, 0x2E, 0x33)   # графит — заголовки/шапка/итог
+    grey = RGBColor(0x80, 0x80, 0x80)  # серый — второстепенный текст
 
     doc = Document()
     normal = doc.styles["Normal"]
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
 
+    def _bottom_rule(p, color_hex, sz=22):
+        """Тонкая линия-акцент под абзацем (нижняя граница)."""
+        pbdr = OxmlElement("w:pBdr")
+        b = OxmlElement("w:bottom")
+        b.set(qn("w:val"), "single"); b.set(qn("w:sz"), str(sz))
+        b.set(qn("w:space"), "6"); b.set(qn("w:color"), color_hex)
+        pbdr.append(b)
+        p._p.get_or_add_pPr().append(pbdr)
+
+    def _thin_borders(tbl, color_hex=HAIRLINE):
+        """Мягкая тонкая сетка вместо чёрного Table Grid."""
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "single"); e.set(qn("w:sz"), "4")
+            e.set(qn("w:space"), "0"); e.set(qn("w:color"), color_hex)
+            borders.append(e)
+        tbl._tbl.tblPr.append(borders)
+
     # ── Логотип-шапка (issue #26) ────────────────────────────────────────────
     _logo = logo_file()   # пусто, если LOGO_PATH не задан — тогда без логотипа
     if _logo:
         lp = doc.add_paragraph()
-        lp.add_run().add_picture(_logo, width=Cm(LOGO_WIDTH_CM))
+        lp.paragraph_format.space_after = Pt(4)
+        lp.add_run().add_picture(_logo, width=Cm(3.2))
 
-    # ── Жёлтая титульная плашка ──────────────────────────────────────────────
-    tbar = doc.add_table(rows=1, cols=1)
-    bc = tbar.rows[0].cells[0]
-    shade(bc, YELLOW)
-    r = bc.paragraphs[0].add_run("КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ")
+    # ── Заголовок с тонким жёлтым акцентом (вместо крупной плашки) ────────────
+    tp = doc.add_paragraph()
+    tp.paragraph_format.space_after = Pt(2)
+    r = tp.add_run("Коммерческое предложение")
     r.bold = True
-    r.font.size = Pt(18)
+    r.font.size = Pt(22)
     r.font.color.rgb = ink
+    _bottom_rule(tp, YELLOW)   # фирменный акцент — тонкая жёлтая линия под заголовком
 
     executor = data.get("executor") or "ООО «Ремтехника»"
     meta = doc.add_paragraph()
-    mr = meta.add_run(f"{executor} · {dt.datetime.now():%d.%m.%Y}")
+    meta.paragraph_format.space_before = Pt(4)
+    mr = meta.add_run(f"{executor}   ·   {dt.datetime.now():%d.%m.%Y}")
     mr.font.size = Pt(10)
     mr.font.color.rgb = grey
 
     if data.get("client"):
         p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(0)
         p.add_run("Кому: ").bold = True
         p.add_run(str(data["client"]))
     if data.get("title"):
@@ -315,20 +343,25 @@ def create_proposal(data: dict) -> bytes:
         tr = p.add_run(str(data["title"]))
         tr.bold = True
         tr.font.size = Pt(13)
+        tr.font.color.rgb = ink
 
     # ── Таблица позиций ──────────────────────────────────────────────────────
     items = data.get("items") or []
     markup = float(data.get("markup_percent") or 0)
     headers = ["№", "Наименование", "Кол-во", "Цена, ₽", "Сумма, ₽"]
+    aligns = [WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.CENTER,
+              WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.RIGHT]
     t = doc.add_table(rows=1, cols=len(headers))
-    t.style = "Table Grid"
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _thin_borders(t)
     for i, h in enumerate(headers):
-        cell = t.rows[0].cells[i]
-        run = cell.paragraphs[0].add_run(h)
+        pp = t.rows[0].cells[i].paragraphs[0]
+        pp.alignment = aligns[i]
+        run = pp.add_run(h)
         run.bold = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         run.font.size = Pt(10)
-        shade(cell, DARK)
+        shade(t.rows[0].cells[i], INK)
 
     total = 0
     for idx, it in enumerate(items, 1):
@@ -339,20 +372,26 @@ def create_proposal(data: dict) -> bytes:
         vals = [str(idx), str(it.get("name", "")), _num(qty), _num(price), _num(summ)]
         cells = t.add_row().cells
         for i, v in enumerate(vals):
-            cells[i].text = str(v)
-            if cells[i].paragraphs[0].runs:
-                cells[i].paragraphs[0].runs[0].font.size = Pt(10)
+            pp = cells[i].paragraphs[0]
+            pp.alignment = aligns[i]
+            run = pp.add_run(str(v))
+            run.font.size = Pt(10)
             if idx % 2 == 0:
-                shade(cells[i], BAND)
+                shade(cells[i], SOFT)   # приглушённое серое чередование
 
-    # ИТОГО
+    # ИТОГО — сдержанно: серая подпись + бледно-жёлтая сумма (единственный акцент)
     trow = t.add_row().cells
     tl = trow[0].merge(trow[3])
-    tl.paragraphs[0].add_run("ИТОГО" + (f" (с наценкой {markup:g}%)" if markup else "")).bold = True
+    tl.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    lab = tl.paragraphs[0].add_run("ИТОГО" + (f" (с наценкой {markup:g}%)" if markup else ""))
+    lab.bold = True
+    lab.font.color.rgb = ink
+    trow[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
     tot = trow[4].paragraphs[0].add_run(_num(total) + " ₽")
     tot.bold = True
-    for c in (tl, trow[4]):
-        shade(c, YELLOW)
+    tot.font.color.rgb = ink
+    shade(tl, SOFT)
+    shade(trow[4], BAND)   # бледно-жёлтый — мягкий фирменный акцент
 
     # ── Условия и контакты ───────────────────────────────────────────────────
     doc.add_paragraph()
@@ -366,10 +405,12 @@ def create_proposal(data: dict) -> bytes:
         p.add_run(str(data["contact"]))
 
     # ── Реквизиты компании (issue #26) ───────────────────────────────────────
-    from services.docx_style import requisites_lines
-    doc.add_paragraph()
+    sep = doc.add_paragraph()
+    sep.paragraph_format.space_before = Pt(10)
+    _bottom_rule(sep, HAIRLINE, sz=6)   # тонкий разделитель над реквизитами
     for line in requisites_lines():
         rp = doc.add_paragraph()
+        rp.paragraph_format.space_after = Pt(0)
         rr = rp.add_run(line)
         rr.font.size = Pt(9)
         rr.font.color.rgb = grey
