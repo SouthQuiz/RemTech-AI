@@ -44,6 +44,27 @@ async def _client():
     return client
 
 
+async def _resolve(client, target):
+    """Находит чат/группу: числовой id или @username — напрямую; иначе ищем по
+    названию среди диалогов пользователя (точное совпадение → подстрока)."""
+    t = str(target).strip()
+    if t.lstrip("-").isdigit():
+        return await client.get_entity(int(t))
+    if t.startswith("@"):
+        return await client.get_entity(t)
+    tl = t.lower()
+    best = None
+    async for d in client.iter_dialogs():
+        name = (d.name or "").lower()
+        if name == tl:
+            return d.entity
+        if best is None and tl in name:
+            best = d.entity
+    if best is not None:
+        return best
+    raise TelethonError(f"чат/группа «{target}» не найдена среди твоих диалогов")
+
+
 def _sender_name(msg) -> str:
     s = getattr(msg, "sender", None)
     if s is None:
@@ -75,8 +96,9 @@ async def list_dialogs(limit: int = 30, *, client_factory=_client) -> str:
 async def read_chat(target, limit: int = 30, *, client_factory=_client) -> str:
     client = await client_factory()
     try:
+        entity = await _resolve(client, target)
         msgs = []
-        async for m in client.iter_messages(target, limit=limit):
+        async for m in client.iter_messages(entity, limit=limit):
             if getattr(m, "text", None):
                 msgs.append({"ts": m.date.astimezone().strftime("%d.%m %H:%M"),
                              "sender": _sender_name(m), "text": m.text[:500]})
@@ -91,8 +113,9 @@ async def read_since(target, since: dt.datetime, limit: int = 200,
     """Сообщения чата за период (позже since). Возвращает список {ts, sender, text}."""
     client = await client_factory()
     try:
+        entity = await _resolve(client, target)
         out = []
-        async for m in client.iter_messages(target, limit=limit):
+        async for m in client.iter_messages(entity, limit=limit):
             mdate = m.date if m.date.tzinfo else m.date.replace(tzinfo=dt.timezone.utc)
             if mdate < since:
                 break   # дальше только старее (итерация новых→старых)
