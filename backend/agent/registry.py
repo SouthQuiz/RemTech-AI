@@ -37,6 +37,7 @@ TOOL_META: dict[str, tuple[str, str]] = {
     "remove_digest_group":   ("➖ Убираю группу из сводки...",   "Убрать группу из сводки"),
     "list_digest_groups":    ("📋 Группы в сводке...",           "Группы в сводке"),
     "get_weather":           ("🌦 Смотрю погоду...",            "Погода"),
+    "create_contract":       ("📜 Формирую договор...",         "Создать договор"),
 }
 
 
@@ -47,6 +48,7 @@ TOOL_META: dict[str, tuple[str, str]] = {
 TOOL_ROLES: dict[str, set[str]] = {
     "search_tenders": {"закупки", "руководство"},
     "analyze_procurement": {"закупки", "руководство"},
+    "create_contract": {"продажи", "руководство"},
 }
 
 

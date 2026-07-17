@@ -136,6 +136,40 @@ def test_proposal_has_no_logo():
     assert len(Document(io.BytesIO(out)).inline_shapes) == 0
 
 
+async def test_create_contract_tool(monkeypatch):
+    # #43 — договор: реквизиты + правовая оговорка + сохранение полей [УТОЧНИТЬ]
+    import app.orchestrator as orch
+    captured = {}
+
+    async def fake_save(self, uid, cid, name, data, kind, emit, etype):
+        captured["data"] = data
+
+    monkeypatch.setattr(orch.Orchestrator, "_save_file", fake_save)
+
+    async def emit(_e):
+        pass
+    res = await orch.Orchestrator()._execute_tool(
+        "create_contract",
+        {"title": "Договор поставки", "filename": "Договор",
+         "content": "1. Предмет: поставка экскаватора.\n2. Цена: [УТОЧНИТЬ: сумма договора]."},
+        emit, 1, None, None)
+    assert "черновик" in res.lower()
+    from docx import Document
+    text = "\n".join(p.text for p in Document(io.BytesIO(captured["data"])).paragraphs)
+    assert "[УТОЧНИТЬ: сумма договора]" in text        # незаполненное сохранено, не выдумано
+    assert "ПРАВОВАЯ ОГОВОРКА" in text                 # правовая оговорка добавлена
+    assert "2447007401" in text                        # реквизиты «Ремтехники» (ИНН)
+
+
+def test_create_contract_rbac():
+    from agent.registry import role_can_use_tool
+    assert role_can_use_tool("продажи", "create_contract") is True
+    assert role_can_use_tool("руководство", "create_contract") is True
+    assert role_can_use_tool("admin", "create_contract") is True
+    assert role_can_use_tool("закупки", "create_contract") is False
+    assert role_can_use_tool("user", "create_contract") is False
+
+
 def test_detect_kind():
     assert detect_kind("a.docx") == "docx"
     assert detect_kind("b.PDF") == "pdf"

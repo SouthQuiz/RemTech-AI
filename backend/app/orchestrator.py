@@ -356,6 +356,7 @@ class Orchestrator:
             "remove_digest_group": self._t_remove_digest_group,
             "list_digest_groups": self._t_list_digest_groups,
             "get_weather": self._t_get_weather,
+            "create_contract": self._t_create_contract,
         }
 
     async def _execute_tool(self, name, params, emit, uid, cid, roles=None, sources=None):
@@ -652,6 +653,26 @@ class Orchestrator:
             return await asyncio.to_thread(weather_svc.get_weather, params.get("city", ""))
         except weather_svc.WeatherError as e:
             return f"Не удалось получить погоду: {e}"
+
+    async def _t_create_contract(self, params, emit, uid, cid, roles, sources):
+        from services.docx_style import requisites_lines
+        title = (params.get("title") or "Договор").strip()
+        content = (params.get("content") or "").strip()
+        if not content:
+            return ("Нужен текст договора: сначала найди шаблон/условия в базе знаний "
+                    "(search_knowledge_base), затем составь текст с полями [УТОЧНИТЬ: …].")
+        disclaimer = (
+            "\n\n---\n\n**⚠️ ПРАВОВАЯ ОГОВОРКА.** Настоящий документ сформирован автоматически "
+            "и является ЧЕРНОВИКОМ. Перед подписанием он должен быть проверен юристом. Поля, "
+            "отмеченные [УТОЧНИТЬ: …], необходимо заполнить проверенными данными.")
+        reqs = "\n\n" + "\n".join(requisites_lines())
+        full = f"# {title}\n\n{content}{reqs}{disclaimer}"
+        base = params.get("filename") or "Договор"
+        data = await asyncio.to_thread(docgen.create_docx, full, base)
+        fname = base + ".docx"
+        await self._save_file(uid, cid, fname, data, "docx", emit, "document")
+        return (f"Договор «{fname}» сформирован (ЧЕРНОВИК) и отправлен. ⚠️ Требует проверки "
+                "юристом перед подписанием; проверь и заполни поля [УТОЧНИТЬ].")
 
     async def _t_read_doc(self, params, emit, uid, cid, roles, sources):
         cur = await self.state.get_docx(cid)
