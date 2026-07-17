@@ -36,6 +36,8 @@ def detect_kind(filename: str) -> str:
         return "pdf"
     if ext in ("jpg", "jpeg", "png", "gif", "webp"):
         return "image"
+    if ext in ("mp3", "ogg", "oga", "opus", "wav", "m4a", "aac", "flac"):
+        return "audio"
     if ext in ("txt", "md", "csv"):
         return "text"
     return "other"

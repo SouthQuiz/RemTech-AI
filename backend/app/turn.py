@@ -32,7 +32,15 @@ async def _resolve_attachments(s, uid: int, file_ids: list) -> list[dict]:
             continue
         data, name = res
         kind = detect_kind(name)
-        txt = "" if kind == "image" else extract_text(data, name)
+        if kind == "image":
+            txt = ""
+        elif kind == "audio":   # #41 — запись звонка → транскрипт (локальный Whisper, #34)
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else "mp3"
+            transcript = await maybe_transcribe(data, f"audio/{ext}")
+            txt = (f"[Транскрипт аудио «{name}»]\n{transcript}" if transcript
+                   else f"[Не удалось распознать аудио «{name}» — проверьте, включён ли STT]")
+        else:
+            txt = extract_text(data, name)
         out.append({"kind": kind, "name": name, "data": data, "text": txt})
     return out
 

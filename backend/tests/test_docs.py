@@ -170,11 +170,51 @@ def test_create_contract_rbac():
     assert role_can_use_tool("user", "create_contract") is False
 
 
+def test_create_conversation_report():
+    # #41 — отчёт анализа переписки/звонка
+    from docx import Document
+    data = {
+        "title": "Звонок с ООО «Ромашка»",
+        "summary": "Обсудили поставку экскаватора; клиент готов, ждёт КП.",
+        "agreements": ["Поставка LiuGong 975F", "Аванс 50%"],
+        "open_questions": ["Точный срок поставки"],
+        "next_steps": ["Кирилл: подготовить КП до пятницы"],
+        "risks": ["Задержка поставки из Китая"],
+    }
+    out = docgen.create_conversation_report(data)
+    d = Document(io.BytesIO(out))
+    text = "\n".join(p.text for p in d.paragraphs)
+    tables = " ".join(c.text for t in d.tables for r in t.rows for c in r.cells)
+    assert "АНАЛИЗ" in tables and "Договорённости" in tables
+    assert "Аванс 50%" in text and "подготовить КП" in text
+
+
+async def test_analyze_conversation_tool(monkeypatch):
+    import app.orchestrator as orch
+    captured = {}
+
+    async def fake_save(self, uid, cid, name, data, kind, emit, etype):
+        captured["data"] = data
+
+    monkeypatch.setattr(orch.Orchestrator, "_save_file", fake_save)
+
+    async def emit(_e):
+        pass
+    res = await orch.Orchestrator()._execute_tool(
+        "analyze_conversation",
+        {"summary": "итог", "agreements": ["a1"], "next_steps": ["s1"], "risks": ["r1"]},
+        emit, 1, None, None)
+    assert "3 пунктов" in res            # 1 договорённость + 1 шаг + 1 риск
+    assert captured["data"][:2] == b"PK"  # валидный .docx (zip)
+
+
 def test_detect_kind():
     assert detect_kind("a.docx") == "docx"
     assert detect_kind("b.PDF") == "pdf"
     assert detect_kind("c.png") == "image"
     assert detect_kind("d.xlsx") == "xlsx"
+    assert detect_kind("call.mp3") == "audio"
+    assert detect_kind("rec.ogg") == "audio"
     assert detect_kind("e.unknown") == "other"
 
 

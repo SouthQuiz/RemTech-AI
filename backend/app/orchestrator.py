@@ -357,6 +357,7 @@ class Orchestrator:
             "list_digest_groups": self._t_list_digest_groups,
             "get_weather": self._t_get_weather,
             "create_contract": self._t_create_contract,
+            "analyze_conversation": self._t_analyze_conversation,
         }
 
     async def _execute_tool(self, name, params, emit, uid, cid, roles=None, sources=None):
@@ -673,6 +674,14 @@ class Orchestrator:
         await self._save_file(uid, cid, fname, data, "docx", emit, "document")
         return (f"Договор «{fname}» сформирован (ЧЕРНОВИК) и отправлен. ⚠️ Требует проверки "
                 "юристом перед подписанием; проверь и заполни поля [УТОЧНИТЬ].")
+
+    async def _t_analyze_conversation(self, params, emit, uid, cid, roles, sources):
+        d = await asyncio.to_thread(docgen.create_conversation_report, params)
+        fname = (params.get("filename") or "Анализ_переписки") + ".docx"
+        await self._save_file(uid, cid, fname, d, "docx", emit, "document")
+        n = sum(len(params.get(k) or []) for k in
+                ("agreements", "open_questions", "next_steps", "risks"))
+        return f"Отчёт анализа «{fname}» готов ({n} пунктов) и отправлен пользователю."
 
     async def _t_read_doc(self, params, emit, uid, cid, roles, sources):
         cur = await self.state.get_docx(cid)

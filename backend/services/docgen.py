@@ -480,6 +480,76 @@ def create_spec_report(data: dict) -> bytes:
     return buf.getvalue()
 
 
+def create_conversation_report(data: dict) -> bytes:
+    """Issue #41 (TASK-0502) — отчёт анализа звонка/переписки (Word, фирменный стиль).
+
+    data: {title, summary, agreements:[...], open_questions:[...], next_steps:[...],
+    risks:[...]}. Разбор материала делает модель; здесь — оформление результата."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+
+    from services.docx_style import DARK, YELLOW, shade
+
+    ink = RGBColor(0x1A, 0x1A, 0x1A)
+    grey = RGBColor(0x7F, 0x7F, 0x7F)
+    doc = Document()
+    doc.styles["Normal"].font.name = "Calibri"
+    doc.styles["Normal"].font.size = Pt(11)
+
+    tbar = doc.add_table(rows=1, cols=1)
+    bc = tbar.rows[0].cells[0]
+    shade(bc, YELLOW)
+    r = bc.paragraphs[0].add_run("АНАЛИЗ ПЕРЕПИСКИ / ЗВОНКА")
+    r.bold = True
+    r.font.size = Pt(16)
+    r.font.color.rgb = ink
+
+    if data.get("title"):
+        p = doc.add_paragraph()
+        tr = p.add_run(str(data["title"]))
+        tr.bold = True
+        tr.font.size = Pt(13)
+    m = doc.add_paragraph().add_run(f"Сформировано {dt.datetime.now():%d.%m.%Y}")
+    m.font.size = Pt(9)
+    m.font.color.rgb = grey
+
+    if data.get("summary"):
+        doc.add_paragraph(str(data["summary"]))
+
+    sections = [
+        ("Договорённости", data.get("agreements") or []),
+        ("Открытые вопросы", data.get("open_questions") or []),
+        ("Следующие шаги (кому / что / когда)", data.get("next_steps") or []),
+        ("Риски", data.get("risks") or []),
+    ]
+    t = doc.add_table(rows=1, cols=2)
+    t.style = "Table Grid"
+    for i, h in enumerate(("Раздел", "Пунктов")):
+        cell = t.rows[0].cells[i]
+        rr = cell.paragraphs[0].add_run(h)
+        rr.bold = True
+        rr.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        shade(cell, DARK)
+    for label, items in sections:
+        cells = t.add_row().cells
+        cells[0].text = label
+        cells[1].text = str(len(items))
+
+    for label, items in sections:
+        if not items:
+            continue
+        h = doc.add_paragraph()
+        hr = h.add_run(label)
+        hr.bold = True
+        hr.font.size = Pt(13)
+        for it in items:
+            doc.add_paragraph(str(it), style="List Bullet")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 def create_estimate(data: dict) -> bytes:
     """Issue #27 — смета/бюджет в Excel (.xlsx) с формулами и фирменным оформлением.
 

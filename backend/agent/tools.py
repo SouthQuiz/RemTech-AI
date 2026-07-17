@@ -451,6 +451,34 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "analyze_conversation",
+        "description": (
+            "Анализ переписки или расшифровки звонка. Материал уже в контексте: текст "
+            "переписки (пользователь вставил/прислал файлом) или транскрипт аудиозаписи "
+            "звонка (аудио распознаётся автоматически при загрузке). ВНИМАТЕЛЬНО разбери "
+            "его и вызови инструмент со структурой: договорённости, открытые вопросы, "
+            "следующие шаги (кому/что/когда), риски — получишь оформленный отчёт .docx. "
+            "Только по содержимому; чего в материале нет — не домысливай."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "О чём переписка/звонок (стороны, тема)"},
+                "summary": {"type": "string", "description": "Краткое резюме: суть и общий итог"},
+                "agreements": {"type": "array", "items": {"type": "string"},
+                               "description": "Достигнутые договорённости"},
+                "open_questions": {"type": "array", "items": {"type": "string"},
+                                   "description": "Открытые вопросы / что не решено"},
+                "next_steps": {"type": "array", "items": {"type": "string"},
+                               "description": "Следующие шаги: кому, что, к какому сроку"},
+                "risks": {"type": "array", "items": {"type": "string"},
+                          "description": "Риски и потенциальные проблемы"},
+                "filename": {"type": "string", "description": "Имя файла без расширения"},
+            },
+            "required": ["summary"],
+        },
+    },
+    {
         "name": "create_contract",
         "description": (
             "Быстро формирует ДОГОВОР (.docx) по краткому запросу («договор поставки на X "
