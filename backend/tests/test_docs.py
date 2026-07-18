@@ -208,6 +208,119 @@ async def test_analyze_conversation_tool(monkeypatch):
     assert captured["data"][:2] == b"PK"  # валидный .docx (zip)
 
 
+def test_create_presentation_is_valid():
+    # презентация: титул + слайды, тезисы и **жирный** на месте
+    from pptx import Presentation
+    spec = {
+        "title": "Модернизация парка",
+        "subtitle": "Для ООО «Стройка» · 2026",
+        "slides": [
+            {"title": "Проблема", "bullets": ["Износ **65%**", "Простои растут"]},
+            {"title": "Решение", "bullets": ["XCMG XE215", "Сервис 24/7"], "notes": "акцент на сроки"},
+        ],
+    }
+    out = docgen.create_presentation(spec)
+    assert out[:2] == b"PK" and len(out) > 5000     # валидный .pptx (zip)
+    prs = Presentation(io.BytesIO(out))
+    assert len(prs.slides._sldIdLst) == 3            # титул + 2 контентных
+    all_text = " ".join(
+        sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame)
+    assert "Модернизация парка" in all_text and "Проблема" in all_text
+    assert "65%" in all_text and "XCMG XE215" in all_text
+    # заметки докладчика сохранены
+    notes = [s.notes_slide.notes_text_frame.text for s in prs.slides if s.has_notes_slide]
+    assert any("сроки" in n for n in notes)
+
+
+async def test_create_presentation_tool(monkeypatch):
+    import app.orchestrator as orch
+    captured = {}
+
+    async def fake_save(self, uid, cid, name, data, kind, emit, etype):
+        captured.update(name=name, data=data, kind=kind)
+
+    monkeypatch.setattr(orch.Orchestrator, "_save_file", fake_save)
+
+    async def emit(_e):
+        pass
+    res = await orch.Orchestrator()._execute_tool(
+        "create_presentation",
+        {"title": "Питч", "filename": "Питч",
+         "slides": [{"title": "Идея", "bullets": ["раз", "два"]}]},
+        emit, 1, None, None)
+    assert "2 слайдов" in res                         # титул + 1 контентный
+    assert captured["name"] == "Питч.pptx" and captured["kind"] == "pptx"
+    assert captured["data"][:2] == b"PK"
+
+
+def _png_bytes(w=64, h=48, color=(200, 160, 40)):
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_presentation_embeds_images_via_bytes():
+    # docgen встраивает картинки, переданные байтами (обложка + слайды split/full)
+    from pptx import Presentation
+    spec = {
+        "title": "С картинками", "_cover_image": _png_bytes(160, 90),
+        "slides": [
+            {"title": "Сплит", "bullets": ["раз"], "_image": _png_bytes(90, 140), "layout": "split"},
+            {"title": "Раздел", "bullets": ["акцент"], "_image": _png_bytes(160, 90), "layout": "full"},
+            {"title": "Без фото", "bullets": ["текст"]},
+        ],
+    }
+    out = docgen.create_presentation(spec)
+    prs = Presentation(io.BytesIO(out))
+    pics = sum(1 for s in prs.slides for sh in s.shapes if sh.shape_type == 13)
+    assert pics == 3                                   # обложка + 2 слайда с фото
+
+
+async def test_create_presentation_hybrid_images(monkeypatch):
+    # гибрид: реального фото нет → AI-генерация (FLUX замокана) для обложки и слайда
+    import app.orchestrator as orch
+    from pptx import Presentation
+    captured = {}
+
+    async def fake_save(self, uid, cid, name, data, kind, emit, etype):
+        captured["data"] = data
+
+    async def fake_flux(prompt, aspect_ratio="1:1"):
+        return _png_bytes()
+
+    monkeypatch.setattr(orch.Orchestrator, "_save_file", fake_save)
+    monkeypatch.setattr(orch.replicate_svc, "generate_image_flux", fake_flux)
+    monkeypatch.setattr(orch.assets, "find_photo", lambda q: None)   # ассетов нет
+
+    events = []
+
+    async def emit(e):
+        events.append(e)
+    res = await orch.Orchestrator()._execute_tool(
+        "create_presentation",
+        {"title": "Питч", "cover_image_prompt": "modern excavator, cinematic",
+         "slides": [{"title": "Идея", "bullets": ["раз"], "image_prompt": "yellow loader"}]},
+        emit, 1, None, None)
+    assert "картинок: 2" in res                        # обложка + 1 слайд сгенерированы
+    prs = Presentation(io.BytesIO(captured["data"]))
+    pics = sum(1 for s in prs.slides for sh in s.shapes if sh.shape_type == 13)
+    assert pics == 2
+    assert any(e.get("type") == "status" and "изображени" in e.get("text", "") for e in events)
+
+
+def test_assets_find_photo(tmp_path, monkeypatch):
+    # поиск реального фото по ключу (совпадение токенов имени файла)
+    from services import assets as assets_mod
+    (tmp_path / "xcmg-xe215.jpg").write_bytes(b"JPGDATA")
+    (tmp_path / "liugong_856h.png").write_bytes(b"PNGDATA")
+    monkeypatch.setattr(assets_mod, "_dir", lambda: str(tmp_path))
+    assert assets_mod.find_photo("XCMG XE215") == b"JPGDATA"
+    assert assets_mod.find_photo("LiuGong 856H погрузчик") == b"PNGDATA"
+    assert assets_mod.find_photo("самосвал КамАЗ") is None      # нет совпадений
+    assert set(assets_mod.list_assets()) == {"xcmg-xe215.jpg", "liugong_856h.png"}
+
+
 def test_detect_kind():
     assert detect_kind("a.docx") == "docx"
     assert detect_kind("b.PDF") == "pdf"

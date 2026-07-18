@@ -134,6 +134,30 @@ class TelegramBot:
         self._pending_conv: dict[int, int] = {}  # chat_id → cid, ждущий подтверждения (#30)
         self._offset: int | None = None
         self._stop = False
+        # Апдейты обрабатываем как фоновые задачи, чтобы длинный ход (видео, ожидание
+        # подтверждения) НЕ блокировал polling-цикл — иначе нажатие кнопки не дойдёт.
+        self._bg: set[asyncio.Task] = set()
+        self._chat_locks: dict[int, asyncio.Lock] = {}   # серіализация ходов одного чата
+
+    def _lock_for(self, chat_id: int) -> asyncio.Lock:
+        lock = self._chat_locks.get(chat_id)
+        if lock is None:
+            lock = self._chat_locks[chat_id] = asyncio.Lock()
+        return lock
+
+    def _spawn(self, coro) -> None:
+        """Запускает обработку апдейта фоном (с логом ошибок) и держит ссылку на
+        задачу, пока она не завершится (иначе GC может её оборвать)."""
+        task = asyncio.create_task(self._guard(coro))
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    @staticmethod
+    async def _guard(coro) -> None:
+        try:
+            await coro
+        except Exception:
+            log.exception("update handling failed")
 
     async def agent_id(self) -> int | None:
         """id агента-персоны по имени из конфига (кэш). Нет имени/агента → None
@@ -181,6 +205,15 @@ class TelegramBot:
         if not text and not voice and not document and not photo:
             return
 
+        # Ходы одного чата — строго по очереди (лок), чтобы не пересекались; но
+        # callback подтверждения обрабатывается отдельной задачей и лок НЕ ждёт,
+        # поэтому кнопка резолвит ожидание даже пока идёт этот ход.
+        async with self._lock_for(chat_id):
+            await self._dispatch_message(chat_id, frm, tg_id, text,
+                                         voice, document, photo, caption)
+
+    async def _dispatch_message(self, chat_id, frm, tg_id, text,
+                                voice, document, photo, caption) -> None:
         user = await self.resolve_user(tg_id)
         if not user:
             # доступ запрещён: не раскрываем детали, просто просим связать аккаунт
@@ -359,10 +392,11 @@ class TelegramBot:
         updates = resp.get("result", [])
         for upd in updates:
             self._offset = upd["update_id"] + 1
-            try:
-                await self.handle_update(upd)
-            except Exception:
-                log.exception("update handling failed")
+            # Не ждём завершения хода: обрабатываем фоном, чтобы цикл продолжал
+            # получать апдейты (в т.ч. нажатие кнопки подтверждения) во время
+            # долгой операции (видео/подтверждение). Порядок ходов ОДНОГО чата
+            # сохраняется локом внутри handle_update.
+            self._spawn(self.handle_update(upd))
         return len(updates)
 
     # ── доставка напоминаний ─────────────────────────────────────────────────

@@ -181,6 +181,36 @@ async def test_confirmation_callback_resolves(session, monkeypatch):
     assert any(m == "answerCallbackQuery" for m, _ in tx.calls)
 
 
+async def test_poll_does_not_block_on_long_turn(monkeypatch):
+    """Регресс (видео/#30): долгий ход (ожидание подтверждения) НЕ должен блокировать
+    polling-цикл — иначе нажатие кнопки не будет получено и подтверждение зависнет.
+    poll_once обязан вернуться, не дожидаясь завершения обработки апдейта."""
+    import asyncio
+
+    tx = FakeTransport()
+    bot = TelegramBot(tx, allowmap={})
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_handle(_update):
+        started.set()
+        await release.wait()          # имитируем долгий ход / ожидание подтверждения
+    monkeypatch.setattr(bot, "handle_update", slow_handle)
+
+    async def fake_call(method, payload):
+        return {"result": [{"update_id": 1, "message": {}}]} if method == "getUpdates" else {"result": []}
+    monkeypatch.setattr(tx, "call", fake_call)
+
+    n = await bot.poll_once()
+    assert n == 1
+    await asyncio.wait_for(started.wait(), 1)   # ход стартовал в фоне
+    assert not release.is_set()                 # poll_once уже вернулся, ход ещё идёт
+    assert bot._bg                              # задача жива и удерживается ссылкой
+
+    release.set()                               # завершаем фоновой ход
+    for t in list(bot._bg):
+        await t
+
+
 # ── Голосовой ответ отключён: бот принимает голос (STT), но отвечает текстом ──
 
 def test_bot_has_no_voice_reply():

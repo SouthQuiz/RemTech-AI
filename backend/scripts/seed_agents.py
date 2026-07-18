@@ -16,6 +16,12 @@ from app.database import SessionLocal
 
 _ALL_TOOLS = [t["name"] for t in TOOLS if t.get("name")]
 
+# Персона Telegram-бота: её набор инструментов и промпт заданы КОДОМ (не в UI),
+# поэтому при повторном сиде синхронизируем их с актуальным списком инструментов —
+# иначе новый инструмент (напр. create_presentation) не появится у уже созданной
+# персоны. Веб-персоны админ может настраивать в UI — их не трогаем.
+DIRECTOR_PERSONA = "Личный ассистент директора"
+
 AGENTS = [
     {
         "name": "Продажник",
@@ -72,6 +78,16 @@ AGENTS = [
             "- Создание документов по запросу: КП (create_proposal), сметы (create_estimate), "
             "Word/PDF (create_docx/create_pdf), договоры по шаблонам из БЗ (create_contract — "
             "сначала search_knowledge_base по шаблону, недостающее помечай [УТОЧНИТЬ: …]).\n"
+            "- Презентации (create_presentation → .pptx): на просьбу «презентация/слайды/питч/"
+            "деку/pptx/PowerPoint/выступление» ВСЕГДА вызывай create_presentation, НИКОГДА не "
+            "отдавай презентацию в Word/PDF. Сам продумай структуру: титул + 5–9 содержательных "
+            "слайдов (проблема → решение → выгоды и цифры → сроки → следующие шаги), короткие "
+            "ёмкие тезисы (3–6 на слайд, не абзацы), ключевые числа выделяй **жирным**, заголовок "
+            "слайда — по сути. Делай СОВРЕМЕННО — иллюстрируй слайды: для конкретной техники/"
+            "модели указывай image_asset (реальное фото, напр. «XCMG XE215»), для обложки/"
+            "разделов/концепций — image_prompt (AI-картинка, описание на английском); задай "
+            "cover_image_prompt или cover_image_asset для обложки; layout «full» — для эффектных "
+            "разделов. Данные о компании/технике/ценах бери из БЗ, не выдумывай.\n"
             "- Генерация изображений (generate_image/edit_image) и видео (generate_video).\n"
             "- Напоминания: ставь по просьбе (set_reminder) — время события вычисляй сам по "
             "текущей дате; заблаговременные сигналы за 60/30/10 мин и в момент. list_reminders "
@@ -121,11 +137,21 @@ async def seed() -> None:
     async with SessionLocal() as s:
         mc = await repo.get_model_config_by_alias(s, settings.default_model)
         model_id = mc.id if mc else None
-        existing = {a.name for a in await repo.list_agents(s)}
-        created = 0
+        existing = {a.name: a for a in await repo.list_agents(s)}
+        created = resynced = 0
         for spec in AGENTS:
-            if spec["name"] in existing:
-                print(f"= пропуск (уже есть): {spec['name']}")
+            agent = existing.get(spec["name"])
+            if agent is not None:
+                # Персону директора держим в актуальном состоянии (инструменты+промпт).
+                if spec["name"] == DIRECTOR_PERSONA and (
+                    agent.tools != spec["tools"] or agent.system_prompt != spec["system_prompt"]
+                ):
+                    agent.tools = spec["tools"]
+                    agent.system_prompt = spec["system_prompt"]
+                    resynced += 1
+                    print(f"~ синхронизирован: {spec['name']} (инструментов: {len(spec['tools'])})")
+                else:
+                    print(f"= пропуск (уже есть): {spec['name']}")
                 continue
             await repo.create_agent(s, spec["name"], spec["system_prompt"],
                                     spec["tools"], model_id, spec["allowed_roles"])
@@ -134,7 +160,8 @@ async def seed() -> None:
                   f"(инструментов: {'все' if spec['tools'] is None else len(spec['tools'])}, "
                   f"роли: {spec['allowed_roles'] or 'все'})")
         await s.commit()
-        print(f"\nГотово: создано {created}, пропущено {len(AGENTS) - created}.")
+        print(f"\nГотово: создано {created}, синхронизировано {resynced}, "
+              f"пропущено {len(AGENTS) - created - resynced}.")
         print("Для Telegram-персоны выставьте: TELEGRAM_AGENT=Личный ассистент директора")
 
 

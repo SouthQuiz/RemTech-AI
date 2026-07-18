@@ -18,7 +18,7 @@ from app.database import SessionLocal
 from app.llm import gateway, resolve_route
 from app.logging_config import get_logger
 from app.state import make_state_store
-from services import docgen, mail_svc, replicate_svc, telethon_svc, weather_svc, websearch
+from services import assets, docgen, mail_svc, replicate_svc, telethon_svc, weather_svc, websearch
 
 Emit = Callable[[dict], Awaitable[None]]
 settings = get_settings()
@@ -348,6 +348,7 @@ class Orchestrator:
             "generate_video": self._t_generate_video,
             "create_docx": self._t_create_docx,
             "create_pdf": self._t_create_pdf,
+            "create_presentation": self._t_create_presentation,
             "create_proposal": self._t_create_proposal,
             "analyze_spec": self._t_analyze_spec,
             "create_estimate": self._t_create_estimate,
@@ -562,6 +563,60 @@ class Orchestrator:
         fname = params["filename"] + ".pdf"
         await self._save_file(uid, cid, fname, data, "pdf", emit, "document")
         return f"PDF «{fname}» создан и отправлен пользователю."
+
+    async def _t_create_presentation(self, params, emit, uid, cid, roles, sources):
+        settings = get_settings()
+        slides = params.get("slides") or []
+
+        # Гибрид иллюстраций: сначала реальное фото из папки-ассетов (быстро, локально),
+        # иначе AI-генерация по промпту (FLUX, параллельно). Ошибка картинки не рвёт
+        # презентацию — слайд просто без фото.
+        cover_img = assets.find_photo(params.get("cover_image_asset") or "")
+        slide_imgs: list[bytes | None] = [assets.find_photo(sl.get("image_asset") or "")
+                                          for sl in slides]
+
+        gen_jobs = []   # (kind, idx, prompt, aspect) — что генерировать через FLUX
+        if settings.presentation_ai_images:
+            for i, sl in enumerate(slides):
+                if slide_imgs[i] is None and sl.get("image_prompt"):
+                    # full — картинка на весь слайд (16:9); split — боковая колонка (3:4)
+                    ar = "16:9" if (sl.get("layout") or "").lower() == "full" else "3:4"
+                    gen_jobs.append(("slide", i, sl["image_prompt"], ar))
+            if cover_img is None and params.get("cover_image_prompt"):
+                gen_jobs.append(("cover", None, params["cover_image_prompt"], "16:9"))
+
+        if gen_jobs:
+            await emit({"type": "status", "text": f"🎨 Генерирую изображения ({len(gen_jobs)})…"})
+            sem = asyncio.Semaphore(max(1, settings.presentation_image_concurrency))
+
+            async def _gen(prompt, aspect):
+                async with sem:
+                    return await replicate_svc.generate_image_flux(prompt, aspect)
+
+            results = await asyncio.gather(*(_gen(p, ar) for _, _, p, ar in gen_jobs),
+                                           return_exceptions=True)
+            for (kind, idx, _, _), res in zip(gen_jobs, results):
+                img = res if isinstance(res, (bytes, bytearray)) else None
+                if kind == "cover":
+                    cover_img = img
+                else:
+                    slide_imgs[idx] = img
+
+        # Собираем spec с байтами картинок (docgen сети не трогает).
+        spec = dict(params)
+        if cover_img:
+            spec["_cover_image"] = cover_img
+        spec["slides"] = [
+            {**sl, **({"_image": slide_imgs[i]} if slide_imgs[i] else {})}
+            for i, sl in enumerate(slides)
+        ]
+
+        data = await asyncio.to_thread(docgen.create_presentation, spec)
+        fname = (params.get("filename") or params.get("title") or "Презентация") + ".pptx"
+        await self._save_file(uid, cid, fname, data, "pptx", emit, "document")
+        n_img = sum(1 for x in slide_imgs if x) + (1 if cover_img else 0)
+        return (f"Презентация «{fname}» создана ({len(slides) + 1} слайдов, "
+                f"картинок: {n_img}) и отправлена пользователю.")
 
     async def _t_create_proposal(self, params, emit, uid, cid, roles, sources):
         base = params.get("filename") or "КП"

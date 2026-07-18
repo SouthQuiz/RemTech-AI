@@ -18,6 +18,7 @@ TOOL_META: dict[str, tuple[str, str]] = {
     "generate_video":        ("🎬 Генерирую видео...",        "Генерация видео"),
     "create_docx":           ("📝 Создаю документ...",        "Создать Word"),
     "create_pdf":            ("📄 Создаю PDF...",              "Создать PDF"),
+    "create_presentation":   ("📽 Готовлю презентацию...",    "Генератор презентаций"),
     "create_proposal":       ("📑 Готовлю КП...",             "Генератор КП"),
     "create_estimate":       ("📊 Считаю смету...",           "Excel-смета"),
     "analyze_spec":          ("🔍 Анализирую ТЗ...",          "Анализ ТЗ"),

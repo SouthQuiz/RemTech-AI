@@ -845,3 +845,209 @@ def create_pdf(content: str, filename: str = "document") -> bytes:
 
     pdf.build(flow)
     return buf.getvalue()
+
+
+def create_presentation(spec: dict) -> bytes:
+    """Собирает современную презентацию (.pptx) в фирменном стиле «Ремтехники»
+    (графит + жёлтый акцент, без логотипа). Поддерживает картинки на слайдах:
+    обложка-фон, двухколоночные слайды (текст + фото), слайды-разделители.
+
+    Картинки в spec приходят уже как БАЙТЫ (генерацию/поиск делает оркестратор —
+    docgen сети не трогает):
+        spec["_cover_image"]      — bytes фонового изображения обложки (опц.)
+        slide["_image"]           — bytes картинки слайда (опц.)
+        slide["layout"]           — "split" (по умолч., текст+картинка) | "full"
+                                     (картинка на весь слайд + заголовок поверх)
+    spec = {
+        "title": "...", "subtitle": "...", "author": "Ремтехника",
+        "slides": [{"title": "...", "bullets": [...], "notes": "...",
+                    "_image": b"...", "layout": "split"}, ...],
+    }
+    Пустой список слайдов допустим (будет только титульный).
+    """
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.oxml.ns import qn
+    from pptx.util import Emu, Pt
+
+    INK = RGBColor(0x2B, 0x2E, 0x33)     # графит — заголовки
+    BODY = RGBColor(0x33, 0x36, 0x3B)    # основной текст
+    GREY = RGBColor(0x7F, 0x7F, 0x7F)    # второстепенный
+    YELLOW = RGBColor(0xFF, 0xCB, 0x05)  # фирменный акцент
+    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+    DARK = RGBColor(0x1A, 0x1C, 0x20)    # скрим под белым текстом на фото
+    FONT = "Calibri"
+
+    EMU = 914400
+    SW, SH = int(13.333 * EMU), int(7.5 * EMU)          # 16:9
+    MX = int(0.9 * EMU)                                  # боковые поля
+
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = SW, SH
+    blank = prs.slide_layouts[6]
+
+    def _bg(slide, color=WHITE):
+        slide.background.fill.solid()
+        slide.background.fill.fore_color.rgb = color
+
+    def _rect(slide, x, y, w, h, color, alpha=None):
+        sp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, h)
+        sp.fill.solid()
+        sp.fill.fore_color.rgb = color
+        sp.line.fill.background()
+        sp.shadow.inherit = False
+        if alpha is not None:   # alpha = доля НЕПРОЗРАЧНОСТИ, 0..1
+            solid = sp._element.spPr.find(qn("a:solidFill"))
+            srgb = solid.find(qn("a:srgbClr")) if solid is not None else None
+            if srgb is not None:
+                srgb.append(srgb.makeelement(qn("a:alpha"), {"val": str(int(alpha * 100000))}))
+        return sp
+
+    def _text(slide, x, y, w, h, anchor=MSO_ANCHOR.TOP):
+        tb = slide.shapes.add_textbox(x, y, w, h)
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = anchor
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        return tf
+
+    def _runs(p, text, color=None, size=None):
+        """Разбивает **жирный** на run'ы (как в остальных генераторах)."""
+        for i, part in enumerate(str(text).split("**")):
+            if not part:
+                continue
+            r = p.add_run()
+            r.text, r.font.name = part, FONT
+            r.font.bold = i % 2 == 1
+            if color is not None:
+                r.font.color.rgb = color
+            if size is not None:
+                r.font.size = Pt(size)
+
+    def _cover_image(slide, data, x, y, w, h):
+        """Вставляет картинку с обрезкой «под панель» (cover-fill, без искажения)."""
+        try:
+            from PIL import Image
+            iw, ih = Image.open(io.BytesIO(data)).size
+        except Exception:
+            iw = ih = 0
+        pic = slide.shapes.add_picture(io.BytesIO(data), x, y, width=w, height=h)
+        if iw and ih:
+            img_ar, panel_ar = iw / ih, w / h
+            if img_ar > panel_ar:                       # шире панели — режем бока
+                c = (1 - panel_ar / img_ar) / 2
+                pic.crop_left = pic.crop_right = c
+            else:                                        # выше панели — режем верх/низ
+                c = (1 - img_ar / panel_ar) / 2
+                pic.crop_top = pic.crop_bottom = c
+        return pic
+
+    def _footer(slide, author, idx, light=False):
+        col = WHITE if light else GREY
+        f = _text(slide, MX, SH - int(0.5 * EMU), SW - 2 * MX, int(0.3 * EMU))
+        r = f.paragraphs[0].add_run()
+        r.text, r.font.size, r.font.color.rgb, r.font.name = author, Pt(9), col, FONT
+        n = _text(slide, SW - MX - int(0.6 * EMU), SH - int(0.5 * EMU), int(0.6 * EMU), int(0.3 * EMU))
+        n.paragraphs[0].alignment = PP_ALIGN.RIGHT
+        r = n.paragraphs[0].add_run()
+        r.text, r.font.size, r.font.color.rgb, r.font.name = str(idx), Pt(9), col, FONT
+
+    def _bullets(slide, bullets, x, y, w, h, color=BODY):
+        btf = _text(slide, x, y, w, h)
+        for i, b in enumerate(bullets):
+            p = btf.paragraphs[0] if i == 0 else btf.add_paragraph()
+            p.space_after = Pt(10)
+            lead = p.add_run()
+            lead.text, lead.font.name, lead.font.bold = "•  ", FONT, True
+            lead.font.size, lead.font.color.rgb = Pt(18), YELLOW
+            _runs(p, b, color=color, size=18)
+
+    author = (spec.get("author") or "Ремтехника").strip()
+
+    # ── титульный слайд ──────────────────────────────────────────────────────
+    s0 = prs.slides.add_slide(blank)
+    cover = spec.get("_cover_image")
+    if cover:
+        _bg(s0, DARK)
+        _cover_image(s0, cover, 0, 0, SW, SH)             # фон на весь слайд
+        _rect(s0, 0, 0, SW, SH, DARK, alpha=0.45)         # затемнение под текст
+        _rect(s0, 0, 0, int(0.16 * EMU), SH, YELLOW)      # акцент слева
+        tf = _text(s0, MX, int(2.5 * EMU), SW - 2 * MX, int(2.4 * EMU))
+        _runs(tf.paragraphs[0], spec.get("title") or "Презентация", color=WHITE, size=44)
+        for r in tf.paragraphs[0].runs:
+            r.font.bold = True
+        if spec.get("subtitle"):
+            ps = tf.add_paragraph(); ps.space_before = Pt(14)
+            _runs(ps, spec["subtitle"], color=RGBColor(0xE6, 0xE6, 0xE6), size=20)
+        _footer(s0, author, 1, light=True)
+    else:
+        _bg(s0)
+        _rect(s0, 0, 0, int(0.16 * EMU), SH, YELLOW)
+        tf = _text(s0, MX, int(2.4 * EMU), SW - 2 * MX, int(2.4 * EMU))
+        _runs(tf.paragraphs[0], spec.get("title") or "Презентация", color=INK, size=40)
+        for r in tf.paragraphs[0].runs:
+            r.font.bold = True
+        if spec.get("subtitle"):
+            ps = tf.add_paragraph(); ps.space_before = Pt(14)
+            _runs(ps, spec["subtitle"], color=GREY, size=20)
+        _footer(s0, author, 1)
+
+    # ── контентные слайды ────────────────────────────────────────────────────
+    for idx, sl in enumerate(spec.get("slides") or [], start=2):
+        s = prs.slides.add_slide(blank)
+        img = sl.get("_image")
+        layout = (sl.get("layout") or "").lower()
+        bullets = sl.get("bullets") or []
+        title = sl.get("title") or ""
+
+        if img and layout == "full":
+            # слайд-разделитель: фото на весь слайд + заголовок поверх
+            _bg(s, DARK)
+            _cover_image(s, img, 0, 0, SW, SH)
+            _rect(s, 0, 0, SW, SH, DARK, alpha=0.40)
+            _rect(s, MX, int(3.05 * EMU), int(1.1 * EMU), Emu(34000), YELLOW)
+            htf = _text(s, MX, int(3.3 * EMU), SW - 2 * MX, int(2.0 * EMU))
+            _runs(htf.paragraphs[0], title, color=WHITE, size=34)
+            for r in htf.paragraphs[0].runs:
+                r.font.bold = True
+            if bullets:
+                _bullets(s, bullets[:3], MX, int(4.6 * EMU), SW - 2 * MX, int(2.0 * EMU),
+                         color=RGBColor(0xEC, 0xEC, 0xEC))
+            _footer(s, author, idx, light=True)
+        elif img:
+            # двухколоночный: текст слева, фото — правая колонка на всю высоту
+            _bg(s)
+            panel_w = int(SW * 0.42)
+            panel_x = SW - panel_w
+            _cover_image(s, img, panel_x, 0, panel_w, SH)
+            _rect(s, panel_x - Emu(30000), 0, Emu(30000), SH, YELLOW)   # тонкая граница-акцент
+            col_w = panel_x - MX - int(0.4 * EMU)
+            htf = _text(s, MX, int(0.6 * EMU), col_w, int(1.0 * EMU))
+            _runs(htf.paragraphs[0], title, color=INK, size=26)
+            for r in htf.paragraphs[0].runs:
+                r.font.bold = True
+            _rect(s, MX, int(1.55 * EMU), int(1.1 * EMU), Emu(28000), YELLOW)
+            if bullets:
+                _bullets(s, bullets, MX, int(1.95 * EMU), col_w, int(4.7 * EMU))
+            _footer(s, author, idx)
+        else:
+            # без картинки — заголовок + тезисы на всю ширину
+            _bg(s)
+            htf = _text(s, MX, int(0.6 * EMU), SW - 2 * MX, int(1.0 * EMU))
+            _runs(htf.paragraphs[0], title, color=INK, size=28)
+            for r in htf.paragraphs[0].runs:
+                r.font.bold = True
+            _rect(s, MX, int(1.55 * EMU), int(1.1 * EMU), Emu(28000), YELLOW)
+            if bullets:
+                _bullets(s, bullets, MX, int(1.95 * EMU), SW - 2 * MX, int(4.7 * EMU))
+            _footer(s, author, idx)
+
+        notes = (sl.get("notes") or "").strip()
+        if notes:
+            s.notes_slide.notes_text_frame.text = notes
+
+    out = io.BytesIO()
+    prs.save(out)
+    return out.getvalue()
