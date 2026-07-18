@@ -5,6 +5,7 @@
 воркер не обязателен.
 """
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import get_settings
 
@@ -32,6 +33,12 @@ celery_app.conf.update(
         "poll-tenders": {
             "task": "tenders.poll",
             "schedule": settings.tender_poll_interval_seconds,
+        },
+        # TASK-1004 (#42) — ежедневный дайджест новостей по ИИ в час из конфига
+        # (AI_NEWS_HOUR). Сама задача уважает флаг AI_NEWS_ENABLED (выключено → no-op).
+        "news-digest-daily": {
+            "task": "news.digest",
+            "schedule": crontab(minute=0, hour=settings.ai_news_hour),
         },
     },
 )

@@ -279,3 +279,13 @@ async def api_run_tender_poll(admin: dict = Depends(admin_user),
     from services import tender_notify
     n = await tender_notify.poll_once(db)
     return {"new_notifications": n}
+
+
+@router.post("/news/digest")
+async def api_run_news_digest(admin: dict = Depends(admin_user),
+                              db: AsyncSession = Depends(get_db)):
+    """TASK-1004 (#42) — ручной прогон дайджеста новостей по ИИ (проверка/по требованию;
+    в проде — Celery beat). Админ форсирует сборку независимо от флага AI_NEWS_ENABLED."""
+    from services import news_digest
+    r = await news_digest.run_once(db, require_enabled=False)
+    return {"delivered": r["delivered"], "skipped": r["skipped"], "has_text": bool(r["text"])}

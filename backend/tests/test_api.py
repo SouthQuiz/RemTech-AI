@@ -359,3 +359,24 @@ async def test_refresh_revoked_after_logout(client):
     assert (await client.post("/api/logout", headers={"X-CSRF-Token": csrf})).status_code == 200
     # logout отозвал токены (token_version) и очистил cookie → refresh больше не работает
     assert (await client.post("/api/refresh")).status_code == 401
+
+
+async def test_admin_news_digest_manual_run(client, monkeypatch):
+    # TASK-1004 (#42) — ручной прогон дайджеста админом; форсирует сборку (флаг игнор.)
+    admin = await _register_admin(client)
+
+    async def fake_run_once(s, **kw):
+        assert kw.get("require_enabled") is False          # админ форсирует
+        return {"delivered": True, "text": "• новость по ИИ", "skipped": None}
+
+    import services.news_digest as nd
+    monkeypatch.setattr(nd, "run_once", fake_run_once)
+
+    r = await client.post("/api/admin/news/digest", headers=_auth(admin))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"delivered": True, "skipped": None, "has_text": True}
+
+
+async def test_admin_news_digest_requires_admin(client):
+    # эндпоинт под admin_user: без токена — 401
+    assert (await client.post("/api/admin/news/digest")).status_code == 401

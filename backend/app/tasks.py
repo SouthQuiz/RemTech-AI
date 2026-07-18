@@ -49,6 +49,24 @@ def tenders_poll_task() -> int:
     return n
 
 
+@celery_app.task(name="news.digest")
+def news_digest_task() -> int:
+    """TASK-1004 (#42) — периодический выпуск дайджеста новостей по ИИ: веб-поиск →
+    LLM-выжимка (ai_news_digest публикует в веб-ленту) → доставка первому лицу в
+    Telegram. Уважает флаг AI_NEWS_ENABLED; недоступность источника не роняет задачу."""
+    from app.database import SessionLocal
+    from services import news_digest
+
+    async def _run() -> dict:
+        async with SessionLocal() as s:
+            return await news_digest.run_once(s, require_enabled=True)
+
+    r = asyncio.run(_run())
+    log.info("news digest: %s", r.get("skipped") or
+             ("доставлено в Telegram" if r.get("delivered") else "собрано (без Telegram)"))
+    return 1 if r.get("text") else 0
+
+
 @celery_app.task(name="activity.purge")
 def purge_activity_log_task() -> int:
     """Issue #13 — периодическая очистка журнала по сроку хранения (retention)."""
