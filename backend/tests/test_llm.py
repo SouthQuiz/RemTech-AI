@@ -36,8 +36,9 @@ class _Stub:
     def __init__(self, result="ok", fail=False):
         self.result, self.fail, self.calls = result, fail, 0
 
-    async def run(self, system, tools, messages, on_delta):
+    async def run(self, system, tools, messages, on_delta, tool_choice=None):
         self.calls += 1
+        self.tool_choice = tool_choice
         if self.fail:
             raise RuntimeError("provider down")
         await on_delta("chunk")

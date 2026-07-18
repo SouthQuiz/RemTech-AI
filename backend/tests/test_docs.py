@@ -1,6 +1,9 @@
 """Тесты генерации документов (docgen), редактора docx (doc_editor), извлечения (extract)."""
 import io
 import re
+import types
+
+import pytest
 
 from services import docgen
 from services.extract import detect_kind, extract_text
@@ -387,6 +390,60 @@ def test_create_proposal_pptx_rbac():
     assert role_can_use_tool("руководство", "create_proposal_pptx") is True
     assert role_can_use_tool("admin", "create_proposal_pptx") is True
     assert role_can_use_tool("закупки", "create_proposal_pptx") is False
+
+
+# ── #45 Этап 2: извлечение структуры из документа через шлюз (structured output) ──
+
+def _fake_msg(tool_input, name="emit_kp_structure"):
+    block = types.SimpleNamespace(type="tool_use", name=name, input=tool_input)
+    return types.SimpleNamespace(content=[block])
+
+
+class _FakeGateway:
+    def __init__(self, msg):
+        self.msg, self.calls = msg, []
+
+    async def run(self, route, system, tools, messages, on_delta, tool_choice=None):
+        self.calls.append({"system": system, "tools": tools, "tool_choice": tool_choice})
+        return self.msg
+
+
+async def test_extract_slides_from_text_valid_feeds_generator():
+    # ответ модели (tool_use) → валидированная структура → генератор её принимает
+    from services import proposal_pptx as pp
+    gw = _FakeGateway(_fake_msg({
+        "name": "Экскаватор XCMG XE215C", "brand": "XCMG", "price": "9 850 000 ₽",
+        "payment_terms": ["50% аванс", "50% по факту"],
+        "blocks": [{"type": "title", "title": "XE215C", "text": "масса 21.5 т"},
+                   {"type": "split", "rows": [["ДВИГАТЕЛЬ", None], ["Мощность", "118 кВт"]]}]}))
+    data = await pp.extract_slides_from_text("текст КП поставщика…", None, gateway=gw, route=object())
+    assert data["name"] == "Экскаватор XCMG XE215C" and data["brand"] == "XCMG"
+    assert len(data["blocks"]) == 2 and data["blocks"][1]["rows"][0] == ["ДВИГАТЕЛЬ", None]
+    # вызов через шлюз с ФОРСИРОВАННЫМ tool use (structured output), не срез ```-ограждений
+    assert gw.calls[0]["tool_choice"] == {"type": "tool", "name": "emit_kp_structure"}
+    out = docgen.create_proposal_pptx(data)             # извлечённое кормит генератор
+    assert out[:2] == b"PK"
+
+
+async def test_extract_no_tool_use_raises():
+    from services import proposal_pptx as pp
+    msg = types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text="просто текст")])
+    with pytest.raises(pp.ExtractionError):
+        await pp.extract_slides_from_text("t", None, gateway=_FakeGateway(msg), route=object())
+
+
+async def test_extract_invalid_schema_raises():
+    # нет обязательного name → валидация схемы отсекает
+    from services import proposal_pptx as pp
+    gw = _FakeGateway(_fake_msg({"brand": "XCMG", "blocks": []}))
+    with pytest.raises(pp.ExtractionError):
+        await pp.extract_slides_from_text("t", None, gateway=gw, route=object())
+
+
+async def test_extract_empty_text_raises():
+    from services import proposal_pptx as pp
+    with pytest.raises(pp.ExtractionError):
+        await pp.extract_slides_from_text("   ", None, gateway=object(), route=object())
 
 
 def test_detect_kind():

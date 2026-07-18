@@ -29,11 +29,12 @@ class AnthropicProvider:
             kwargs["base_url"] = base_url
         self.client = anthropic.AsyncAnthropic(**kwargs)
 
-    async def run(self, system, tools, messages, on_delta: OnDelta):
-        async with self.client.messages.stream(
-            model=self.model, max_tokens=settings.max_tokens,
-            system=system, tools=tools, messages=messages, timeout=120.0,
-        ) as stream:
+    async def run(self, system, tools, messages, on_delta: OnDelta, tool_choice=None):
+        kwargs = dict(model=self.model, max_tokens=settings.max_tokens,
+                      system=system, tools=tools, messages=messages, timeout=120.0)
+        if tool_choice is not None:   # форс structured output (tool use) — напр. извлечение КП
+            kwargs["tool_choice"] = tool_choice
+        async with self.client.messages.stream(**kwargs) as stream:
             async for chunk in stream.text_stream:
                 await on_delta(chunk)
             return await stream.get_final_message()
@@ -77,12 +78,14 @@ async def resolve_route(s, alias: str | None) -> ModelRoute:
 
 
 class ModelGateway:
-    async def run(self, route: ModelRoute, system, tools, messages, on_delta: OnDelta):
+    async def run(self, route: ModelRoute, system, tools, messages, on_delta: OnDelta,
+                  tool_choice=None):
         """Выполняет запрос по готовому маршруту: основной провайдер, при сбое —
-        fallback. БД не трогает (маршрут уже разрешён вызывающим слоем)."""
+        fallback. БД не трогает (маршрут уже разрешён вызывающим слоем).
+        tool_choice — форс structured output через tool use (напр. извлечение КП #45)."""
         try:
             return await make_provider(route.provider, route.model).run(
-                system, tools, messages, on_delta)
+                system, tools, messages, on_delta, tool_choice)
         except Exception as primary:
             # #15/#21 — не глотаем первопричину: при недоступном fallback пробрасываем
             # именно ИСХОДНУЮ ошибку основного провайдера.
@@ -92,7 +95,7 @@ class ModelGateway:
                 try:
                     log.info("switching to fallback provider '%s'", route.fallback_provider)
                     return await make_provider(route.fallback_provider, route.fallback_model).run(
-                        system, tools, messages, on_delta)
+                        system, tools, messages, on_delta, tool_choice)
                 except Exception as fb_err:
                     log.warning("fallback '%s' unavailable: %s: %s", route.fallback_provider,
                                 type(fb_err).__name__, fb_err)
