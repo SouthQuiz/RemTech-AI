@@ -719,3 +719,59 @@ h1, h2, h3, .brand-name { letter-spacing: -0.02em; }
 .dlg-danger { background: #e5484d; color: #fff; }
 .dlg-danger:hover { background: #d93a3f; }
 @media (prefers-reduced-motion: reduce) { .dlg-overlay, .dlg-card { animation: none; } }
+
+/* ── #45 КП-презентации: мастер ──────────────────────────────────────────── */
+.kp-wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; width: 100%; overflow-y: auto; }
+.kp-steps { display: flex; gap: 8px; margin-bottom: 20px; }
+.kp-step { flex: 1; display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border: 1px solid var(--border); border-radius: 10px; color: var(--muted); font-size: 14px; }
+.kp-step.active { border-color: var(--accent); color: var(--text); }
+.kp-step.done { color: var(--text); }
+.kp-step-n { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 50%; background: var(--panel-2); font-size: 12px; font-weight: 700; }
+.kp-step.active .kp-step-n, .kp-step.done .kp-step-n { background: var(--accent); color: var(--on-accent); }
+.kp-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-bottom: 16px; }
+.kp-card h2 { margin: 0 0 8px; }
+.kp-card h3 { margin: 0 0 12px; font-size: 15px; }
+.kp-upload { text-align: center; }
+.kp-file { display: inline-flex; align-items: center; gap: 8px; margin: 18px 0 10px; padding: 14px 22px;
+  background: var(--accent); color: var(--on-accent); font-weight: 600; border-radius: 10px; cursor: pointer; }
+.kp-file.busy { opacity: .6; pointer-events: none; }
+.kp-link { display: block; margin: 6px auto 0; background: none; border: none; color: var(--muted);
+  cursor: pointer; text-decoration: underline; font-size: 13px; }
+.kp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.kp-field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--muted); }
+.kp-field input, .kp-field textarea { background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 11px; color: var(--text); font: inherit; font-size: 14px; resize: vertical; }
+.kp-field input:focus, .kp-field textarea:focus { outline: none; border-color: var(--accent); }
+.kp-blocks h3 { margin-top: 8px; }
+.kp-block { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px; }
+.kp-block:hover { border-color: var(--border-soft); }
+.kp-block-head { display: flex; align-items: center; gap: 10px; }
+.kp-drag { cursor: grab; color: var(--muted); font-size: 18px; user-select: none; }
+.kp-badge { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 10px; font-size: 12px; font-weight: 600; }
+.kp-x { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; }
+.kp-x:hover { color: #e05555; }
+.kp-photo { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  padding: 8px 14px; border: 1px dashed var(--border); border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--muted); }
+.kp-photo:hover { border-color: var(--accent); color: var(--text); }
+.kp-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.kp-add button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); cursor: pointer; font-size: 13px; }
+.kp-add button:hover { border-color: var(--accent); }
+.kp-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.kp-primary { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; border: none;
+  border-radius: 10px; cursor: pointer; }
+.kp-primary:hover { background: var(--accent-hover); }
+.kp-primary:disabled { opacity: .6; cursor: default; }
+.kp-secondary { padding: 12px 18px; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; cursor: pointer; }
+.kp-done { text-align: center; }
+.kp-done-ico { font-size: 46px; color: var(--accent); }
+.kp-done .kp-primary { margin: 14px auto 4px; }
+@media (max-width: 640px) { .kp-grid { grid-template-columns: 1fr; } }

@@ -135,6 +135,10 @@ export const api = {
     uploadForm("/admin/kb/upload", file, { owner_role: ownerRole }),
   upload: (file, conversationId) =>
     uploadForm("/upload", file, { conversation_id: conversationId }),
+  // #45 — КП-презентации (PPTX): извлечение из документа, загрузка фото, генерация
+  proposalExtract: (file) => uploadForm("/proposals/extract", file),
+  proposalPhoto: (file) => uploadForm("/proposals/photo", file),
+  proposalGenerate: (data) => req("/proposals/generate", { method: "POST", json: data }),
 };
 
 // #4 — файлы грузим через fetch по cookie (токена в URL нет, GET → CSRF не нужен).

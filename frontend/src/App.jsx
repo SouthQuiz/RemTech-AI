@@ -3,6 +3,7 @@ import { api, isAuthed, logout, openSocket, fileBlobUrl, downloadFile } from "./
 import { confirmDialog } from "./Dialog.jsx";
 import { Toaster, toast } from "sonner";
 import AdminPanel from "./AdminPanel.jsx";
+import KPWizard from "./KPWizard.jsx";
 import Markdown from "./Markdown.jsx";
 import logo from "./assets/logo.svg";
 
@@ -430,6 +431,15 @@ function Chat({ onLogout, theme, onToggleTheme }) {
           <span className="sub">· ИИ-ассистент</span>
         </button>
         <div className="topbar-right">
+          {["продажи", "руководство", "admin"].includes(me?.role) && (
+            <button
+              className="nav-toggle"
+              onClick={() => setView((v) => (v === "kp" ? "chat" : "kp"))}
+            >
+              <i className={view === "kp" ? "ti ti-message" : "ti ti-presentation"} />
+              {view === "kp" ? "К чату" : "КП-презентации"}
+            </button>
+          )}
           {me?.role === "admin" && (
             <button
               className="nav-toggle"
@@ -445,6 +455,8 @@ function Chat({ onLogout, theme, onToggleTheme }) {
 
       {view === "admin" ? (
         <AdminPanel />
+      ) : view === "kp" ? (
+        <KPWizard />
       ) : (
       <div className="body">
       {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
