@@ -69,15 +69,17 @@ def create_docx(content: str, filename: str = "document") -> bytes:
                 run = para.add_run(part)
                 _set_font(run, bold=(i % 2 == 1))
 
-    def _set_cell_border(cell):
+    def _set_cell_border(cell, color="D9D9D9"):
         tc = cell._tc
         tcPr = tc.get_or_add_tcPr()
+        borders = OxmlElement("w:tcBorders")
         for side in ("top", "left", "bottom", "right"):
             tag = OxmlElement(f"w:{side}")
             tag.set(qn("w:val"), "single")
             tag.set(qn("w:sz"), "4")
-            tag.set(qn("w:color"), "000000")
-            tcPr.append(tag)
+            tag.set(qn("w:color"), color)
+            borders.append(tag)
+        tcPr.append(borders)
 
     def _set_cell_no_border(cell):
         tc = cell._tc
@@ -98,13 +100,25 @@ def create_docx(content: str, filename: str = "document") -> bytes:
         shd.set(qn("w:fill"), fill)
         tcPr.append(shd)
 
-    def _para_in_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, size_pt=12):
+    def _para_in_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, size_pt=12, color=None):
         p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
         p.clear()
         p.alignment = align
         p.paragraph_format.space_after = Pt(0)
-        _add_run(p, text, bold=bold, size_pt=size_pt)
+        _add_run(p, text, bold=bold, size_pt=size_pt, color=color)
         return p
+
+    def _yellow_rule(p):
+        """Тонкая фирменная жёлтая линия под абзацем (акцент под главным заголовком)."""
+        pPr = p._p.get_or_add_pPr()
+        pbdr = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "12")
+        bottom.set(qn("w:space"), "4")
+        bottom.set(qn("w:color"), "FFCB05")
+        pbdr.append(bottom)
+        pPr.append(pbdr)
 
     def _build_header(logo_path, req_lines):
         hdr = doc.sections[0].header
@@ -131,19 +145,24 @@ def create_docx(content: str, filename: str = "document") -> bytes:
             _set_font(rp.add_run(line), size_pt=11)
 
     def _make_md_table(rows):
+        # Фирменный стиль: тёмная шапка + белый текст, чередование строк, тонкие линии.
+        WHITE = RGBColor(0xFF, 0xFF, 0xFF)
         ncols = max(len(r) for r in rows)
         tbl = doc.add_table(rows=len(rows), cols=ncols)
-        tbl.style = "Table Grid"
         for i, row in enumerate(rows):
             is_header = i == 0
-            for j, cell_text in enumerate(row):
+            for j in range(ncols):
                 cell = tbl.rows[i].cells[j]
                 _para_in_cell(
-                    cell, cell_text.strip(), bold=is_header,
+                    cell, (row[j].strip() if j < len(row) else ""), bold=is_header,
                     align=WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.LEFT,
+                    color=WHITE if is_header else None,
                 )
                 if is_header:
-                    _set_cell_shading(cell)
+                    _set_cell_shading(cell, "2B2E33")        # графит-шапка
+                elif i % 2 == 0:
+                    _set_cell_shading(cell, "F4F4F6")        # приглушённое чередование
+                _set_cell_border(cell)                        # тонкая линия D9D9D9
         return tbl
 
     def _make_2col_table(rows, widths=(50, 50), borders=False):
@@ -219,7 +238,8 @@ def create_docx(content: str, filename: str = "document") -> bytes:
 
         if line.startswith("# "):
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            _add_run(p, line[2:], bold=True, size_pt=14, color=GRAPHITE); continue
+            _add_run(p, line[2:], bold=True, size_pt=14, color=GRAPHITE)
+            _yellow_rule(p); continue
         if line.startswith("## "):
             p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             _add_run(p, line[3:], bold=True, size_pt=13, color=GRAPHITE); continue
