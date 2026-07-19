@@ -17,7 +17,9 @@ PDF_FONT_PATH = get_settings().pdf_font_path or (
 )
 
 
-def create_docx(content: str, filename: str = "document") -> bytes:
+def create_docx(content: str, filename: str = "document", letterhead: bool = True) -> bytes:
+    """letterhead=True — фирменный бланк «Ремтехники» вверху (RT + реквизиты);
+    False — классический стиль без бланка (по выбору пользователя для договоров/док-тов)."""
     from docx import Document
     from docx.enum.table import WD_ALIGN_VERTICAL
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -215,8 +217,8 @@ def create_docx(content: str, filename: str = "document") -> bytes:
         # небольшой отступ под бланком (пустой абзац — редактор доков его пропускает)
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
-    # Фирменный бланк по умолчанию — если пользователь не задал свой [HEADER].
-    if "[HEADER" not in content.upper():
+    # Фирменный бланк — если включён и пользователь не задал свой [HEADER].
+    if letterhead and "[HEADER" not in content.upper():
         _letterhead()
 
     lines = content.split("\n")

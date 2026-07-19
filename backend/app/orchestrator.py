@@ -553,7 +553,9 @@ class Orchestrator:
         if existing:
             nm = existing[1]
             return (f"СТОП. Уже есть активный документ «{nm}». Для правок — read_doc + apply_doc_edits.")
-        data = await asyncio.to_thread(docgen.create_docx, params["content"], params["filename"])
+        letterhead = (params.get("style") or "remtekhnika").lower() != "classic"
+        data = await asyncio.to_thread(docgen.create_docx, params["content"],
+                                       params["filename"], letterhead)
         fname = params["filename"] + ".docx"
         await self.state.set_docx(cid, data, fname)
         await self._save_file(uid, cid, fname, data, "docx", emit, "document")
@@ -823,7 +825,8 @@ class Orchestrator:
         reqs = "\n\n" + "\n".join(requisites_lines())
         full = f"# {title}\n\n{content}{reqs}{disclaimer}"
         base = params.get("filename") or "Договор"
-        data = await asyncio.to_thread(docgen.create_docx, full, base)
+        letterhead = (params.get("style") or "remtekhnika").lower() != "classic"
+        data = await asyncio.to_thread(docgen.create_docx, full, base, letterhead)
         fname = base + ".docx"
         await self._save_file(uid, cid, fname, data, "docx", emit, "document")
         return (f"Договор «{fname}» сформирован (ЧЕРНОВИК) и отправлен. ⚠️ Требует проверки "

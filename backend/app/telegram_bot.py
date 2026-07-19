@@ -196,6 +196,7 @@ class TelegramBot:
         if not msg:
             return
         chat_id = msg["chat"]["id"]
+        message_id = msg.get("message_id")
         frm = msg.get("from") or {}
         tg_id = frm.get("id")
         text = (msg.get("text") or "").strip()
@@ -211,10 +212,10 @@ class TelegramBot:
         # поэтому кнопка резолвит ожидание даже пока идёт этот ход.
         async with self._lock_for(chat_id):
             await self._dispatch_message(chat_id, frm, tg_id, text,
-                                         voice, document, photo, caption)
+                                         voice, document, photo, caption, message_id)
 
     async def _dispatch_message(self, chat_id, frm, tg_id, text,
-                                voice, document, photo, caption) -> None:
+                                voice, document, photo, caption, message_id=None) -> None:
         user = await self.resolve_user(tg_id)
         if not user:
             # доступ запрещён: не раскрываем детали, просто просим связать аккаунт
@@ -290,20 +291,37 @@ class TelegramBot:
             if not text:
                 text = caption or "Разбери этот файл."
 
-        await self._run_turn(chat_id, user, text, audio=audio, file_ids=file_ids)
+        await self._run_turn(chat_id, user, text, audio=audio, file_ids=file_ids,
+                             message_id=message_id)
 
     # ── прогон хода через общее ядро ─────────────────────────────────────────
     async def _run_turn(self, chat_id: int, user: dict, text: str,
-                        audio: bytes | None = None, file_ids: list[int] | None = None) -> None:
+                        audio: bytes | None = None, file_ids: list[int] | None = None,
+                        message_id: int | None = None) -> None:
+        # 👀 на сообщение пользователя + живой статус («Думаю…» → «Ищу в базе…» →
+        # «Создаю документ…»), который обновляется по ходу и удаляется в конце.
+        await self._react(chat_id, message_id, "👀")
         await self._chat_action(chat_id, "typing")
         collected: list[str] = []
         sources: list[dict] = []
         media: list[tuple[int, str, str]] = []   # (file_id, name, тип: image|document)
+        st = {"id": await self._send_status(
+                  chat_id, "🎙 Распознаю голос…" if audio else "💭 Думаю…"),
+              "text": None}
+
+        async def _status(txt: str) -> None:
+            if txt and txt != st["text"]:
+                st["text"] = txt
+                await self._edit_status(chat_id, st["id"], txt)
 
         async def emit(event: dict) -> None:
             etype = event.get("type")
             if etype == "conversation":
                 self._conv[chat_id] = event["id"]
+            elif etype == "status":
+                await _status("💭 " + (event.get("text") or "Обрабатываю запрос…"))
+            elif etype == "tool":
+                await _status(event.get("label") or "⚙️ Обрабатываю…")
             elif etype == "done":
                 if event.get("text"):
                     collected.append(event["text"])
@@ -334,9 +352,11 @@ class TelegramBot:
             self._conv[chat_id] = cid
         except Exception:
             log.exception("telegram turn failed chat=%s", chat_id)
+            await self._delete(chat_id, st["id"])
             await self._send(chat_id, "Внутренняя ошибка обработки запроса. Попробуйте ещё раз.")
             return
 
+        await self._delete(chat_id, st["id"])   # убираем статус перед финальным ответом
         plain = "\n".join(collected).strip() or "Готово."
         answer = md_to_tg_html(plain)
         names = _source_names(sources)
@@ -399,6 +419,42 @@ class TelegramBot:
     async def _chat_action(self, chat_id: int, action: str) -> None:
         try:
             await self.tx.call("sendChatAction", {"chat_id": chat_id, "action": action})
+        except Exception:
+            pass
+
+    async def _react(self, chat_id: int, message_id: int | None, emoji: str = "👀") -> None:
+        """Ставит эмодзи-реакцию на сообщение пользователя (setMessageReaction)."""
+        if not message_id:
+            return
+        try:
+            await self.tx.call("setMessageReaction", {
+                "chat_id": chat_id, "message_id": message_id,
+                "reaction": [{"type": "emoji", "emoji": emoji}]})
+        except Exception:
+            pass
+
+    async def _send_status(self, chat_id: int, text: str) -> int | None:
+        """Шлёт статус-сообщение, возвращает его message_id (для edit/delete)."""
+        try:
+            r = await self.tx.call("sendMessage", {"chat_id": chat_id, "text": text})
+            return (r.get("result") or {}).get("message_id")
+        except Exception:
+            return None
+
+    async def _edit_status(self, chat_id: int, message_id: int | None, text: str) -> None:
+        if not message_id:
+            return
+        try:
+            await self.tx.call("editMessageText",
+                               {"chat_id": chat_id, "message_id": message_id, "text": text})
+        except Exception:
+            pass   # напр. «message is not modified» — не важно
+
+    async def _delete(self, chat_id: int, message_id: int | None) -> None:
+        if not message_id:
+            return
+        try:
+            await self.tx.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
         except Exception:
             pass
 
